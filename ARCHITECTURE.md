@@ -23,18 +23,17 @@ src/
 ├── session.rs     — Save/load open files across restarts
 ├── diff_tool.rs   — Apply unified diffs from AI responses
 ├── preview.rs     — WebKit HTML/CSS preview pane (feature: "preview")
-└── ai_panel.rs    — AI chat window with persistent sessions (feature: "preview")
+├── ai_panel.rs    — AI chat window with persistent sessions (feature: "preview")
+├── canvas.rs      — Live .ui preview: parses XML via gtk4::Builder, renders widgets (debounced 500ms)
+├── palette.rs     — Widget palette panel: 30 widgets / 5 categories, click to insert XML at cursor
+├── inspector.rs   — Property inspector: shows/edits <object> properties at cursor position
+└── toolbox.rs     — Combined palette + inspector in a vertical Paned (one toggle, one panel)
 ```
 
 ## Future Modules (Not Yet Created)
 
-These are the Rui-specific modules that will differentiate it from a plain editor:
-
 ```
 src/
-├── palette.rs     — Widget palette panel (drag GTK4 widgets into design)
-├── inspector.rs   — Property inspector (edit selected widget's properties)
-├── canvas.rs      — Live preview: render .ui XML in a GTK pane
 └── codegen.rs     — Generate Rust bindings from .ui files
 ```
 
@@ -68,10 +67,10 @@ main.rs
 
 To avoid merge conflicts, each new feature should live in its own file:
 
-- **Widget Palette** → `palette.rs` — self-contained panel that emits XML snippets
-- **Property Inspector** → `inspector.rs` — reads/writes attributes on selected XML nodes
-- **Live Canvas** → `canvas.rs` — parses .ui XML and renders a GTK widget tree
-- **Code Generation** → `codegen.rs` — walks .ui XML and emits Rust code
+- **Widget Palette** → `palette.rs` — DONE: 30 widgets in 5 categories, click to insert XML
+- **Property Inspector** → `inspector.rs` — DONE: shows/edits properties of `<object>` at cursor
+- **Live Canvas** → `canvas.rs` — DONE: parses .ui XML and renders GTK widget tree with 500ms debounce
+- **Code Generation** → `codegen.rs` — TODO: walks .ui XML and emits Rust code
 
 Integration point: `app.rs` wires new panels into the layout. Keep `app.rs` changes minimal (add one field to `AppState`, one call in `build_ui`).
 

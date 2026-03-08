@@ -133,7 +133,15 @@ pub fn show_help(parent: &gtk4::ApplicationWindow) {
     append_shortcuts(&content, &[
         ("Ctrl+B",        "Toggle sidebar"),
         ("Ctrl+J",        "Toggle output panel"),
+        ("Ctrl+Shift+U",  "Toggle .ui canvas preview"),
+        ("Ctrl+Shift+T",  "Toggle toolbox (widgets + inspector)"),
         ("Ctrl+Shift+P",  "Toggle HTML/CSS preview pane"),
+    ]);
+
+    append_section(&content, "Layouts");
+    append_shortcuts(&content, &[
+        ("Ctrl+1",        "Code View — code focused, no canvas/palette"),
+        ("Ctrl+2",        "Designer View — canvas + palette, narrow sidebar"),
     ]);
 
     append_section(&content, "Syntax Highlighting & Themes");

@@ -20,6 +20,10 @@ mod session;
 mod sidebar;
 mod statusbar;
 mod tab;
+mod canvas;
+mod palette;
+mod inspector;
+mod toolbox;
 
 #[cfg(feature = "preview")]
 mod preview;

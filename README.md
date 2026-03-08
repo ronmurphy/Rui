@@ -10,17 +10,20 @@ Rui (said like "Rooey" — **R** for Rust + **UI**) is a native GTK4 application
 - Syntax-highlighted `.ui` / XML editing (GtkSourceView 5)
 - Tabbed editor with file tree sidebar
 - Find/replace with regex
-- Session persistence (remembers open files)
+- Session persistence (remembers open files and layout)
 - Built-in dark theme (Catppuccin Mocha)
 - Run scripts directly from the editor
 - AI chat panel (Claude, ChatGPT, Gemini, Codex) with persistent sessions
+- **Live Canvas** — renders `.ui` XML in a side pane as you type (500ms debounce)
+- **Widget Palette** — 30 GTK4 widgets across 5 categories, click to insert XML
+- **Property Inspector** — edit widget properties visually, writes back to XML in real-time
+- **Toolbox** — palette + inspector in one resizable panel
+- **Layout Modes** — Code View (Ctrl+1) and Designer View (Ctrl+2), persisted across sessions
 
-## What's Planned
+## What's Next
 
-- **Live Preview** — render `.ui` XML in a side pane as you type
-- **Widget Palette** — drag-and-drop GTK4 widgets into the design
-- **Property Inspector** — edit widget properties visually
 - **Code Generation** — emit idiomatic Rust bindings from `.ui` files
+- **Drag-and-drop** — place widgets visually on the canvas
 
 ## Building
 
