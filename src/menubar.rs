@@ -55,6 +55,7 @@ pub fn build(app: &Application) -> gtk4::PopoverMenuBar {
     run_menu.append(Some("Build"),        Some("app.build"));
     run_menu.append(Some("Stop"),         Some("app.stop"));
     run_menu.append(Some("Open in Browser"), Some("app.open-browser"));
+    run_menu.append(Some("Generate All Handlers"), Some("app.generate-handlers"));
 
     let run_item = MenuItem::new(Some("Run"), None);
     run_item.set_submenu(Some(&run_menu));
@@ -85,7 +86,7 @@ pub fn build(app: &Application) -> gtk4::PopoverMenuBar {
         "cut", "copy", "paste", "select-all", "find", "find-replace", "goto-line",
         "toggle-sidebar", "toggle-output", "toggle-canvas", "toggle-toolbox", "toggle-preview", "toggle-minimap",
         "layout-code", "layout-designer",
-        "run", "build", "stop", "open-browser",
+        "run", "build", "stop", "open-browser", "generate-handlers",
         "ai-open", "ai-copy-file", "ai-copy-selection", "ai-apply-diff",
         "help", "about",
     ] {

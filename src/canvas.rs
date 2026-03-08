@@ -25,12 +25,18 @@ const DEBOUNCE_MS: u32 = 500;
 
 /// Shared context passed through the recursive widget builder so click
 /// handlers can move the editor cursor to the corresponding XML source.
+/// Callback type for double-click on an interactive widget.
+/// Parameters: (class_name, widget_id)
+type DblClickCb = Rc<RefCell<Option<Box<dyn Fn(&str, &str)>>>>;
+
 #[derive(Clone)]
 struct ClickCtx {
     /// The source buffer to move the cursor in.
     buffer: Rc<RefCell<Option<sourceview5::Buffer>>>,
     /// The XML string that was parsed (needed to convert byte→char offsets).
     xml: Rc<String>,
+    /// Optional double-click callback for codegen.
+    on_double_click: DblClickCb,
 }
 
 /// The live preview panel shown beside the editor.
@@ -48,6 +54,8 @@ pub struct Canvas {
     generation: Rc<Cell<u64>>,
     /// The current source buffer (set via connect_buffer).
     source_buffer: Rc<RefCell<Option<sourceview5::Buffer>>>,
+    /// Double-click callback: (class, id) → open/create companion file.
+    on_double_click: DblClickCb,
 }
 
 impl Canvas {
@@ -92,6 +100,7 @@ impl Canvas {
             current_child: Rc::new(RefCell::new(None)),
             generation: Rc::new(Cell::new(0)),
             source_buffer: Rc::new(RefCell::new(None)),
+            on_double_click: Rc::new(RefCell::new(None)),
         }
     }
 
@@ -120,6 +129,7 @@ impl Canvas {
         let ctx = ClickCtx {
             buffer: self.source_buffer.clone(),
             xml: Rc::new(xml.to_owned()),
+            on_double_click: self.on_double_click.clone(),
         };
 
         // Find all top-level <object> nodes (may be wrapped in <interface>)
@@ -224,6 +234,12 @@ impl Canvas {
 
     pub fn is_visible(&self) -> bool {
         self.widget.is_visible()
+    }
+
+    /// Register a callback invoked when the user double-clicks an interactive
+    /// widget in the canvas.  The callback receives `(class, id)`.
+    pub fn set_on_double_click<F: Fn(&str, &str) + 'static>(&self, cb: F) {
+        *self.on_double_click.borrow_mut() = Some(Box::new(cb));
     }
 }
 
@@ -431,7 +447,8 @@ fn collect_combobox_items(node: roxmltree::Node) -> Vec<String> {
 /// Attach a click gesture to a widget that jumps the editor cursor to
 /// the `<object>` tag's position in the source XML when clicked.
 /// For GtkExpander, also toggles expanded state since we claim the click.
-fn attach_click_to_select(widget: &Widget, byte_offset: usize, ctx: &ClickCtx, class: &str) {
+/// On double-click, fires the codegen callback for interactive widgets.
+fn attach_click_to_select(widget: &Widget, byte_offset: usize, ctx: &ClickCtx, class: &str, id: &str) {
     let gesture = GestureClick::new();
     gesture.set_button(1); // left click
 
@@ -439,8 +456,11 @@ fn attach_click_to_select(widget: &Widget, byte_offset: usize, ctx: &ClickCtx, c
     let xml_rc = ctx.xml.clone();
     let is_expander = class == "GtkExpander";
     let widget_ref = widget.clone();
+    let dbl_click_cb = ctx.on_double_click.clone();
+    let class_owned = class.to_string();
+    let id_owned = id.to_string();
 
-    gesture.connect_pressed(move |gesture, _n_press, _x, _y| {
+    gesture.connect_pressed(move |gesture, n_press, _x, _y| {
         // Stop propagation so clicking a leaf widget doesn't also fire
         // on every ancestor container
         gesture.set_state(gtk4::EventSequenceState::Claimed);
@@ -464,6 +484,13 @@ fn attach_click_to_select(widget: &Widget, byte_offset: usize, ctx: &ClickCtx, c
             buffer.place_cursor(&iter);
 
             // cursor-position-notify fires → inspector updates automatically
+        }
+
+        // Double-click → fire codegen callback
+        if n_press == 2 {
+            if let Some(cb) = dbl_click_cb.borrow().as_ref() {
+                cb(&class_owned, &id_owned);
+            }
         }
     });
 
@@ -930,7 +957,8 @@ fn build_widget(node: roxmltree::Node, ctx: &ClickCtx) -> Option<Widget> {
     // Offset past "<object" (7 bytes) so the cursor lands INSIDE the tag —
     // the inspector's rfind("<object") then finds THIS node, not the parent.
     let byte_offset = node.range().start + 7;
-    attach_click_to_select(&widget, byte_offset, ctx, class);
+    let id = node.attribute("id").unwrap_or("");
+    attach_click_to_select(&widget, byte_offset, ctx, class, id);
 
     Some(widget)
 }

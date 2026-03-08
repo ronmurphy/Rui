@@ -686,6 +686,137 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         });
     }
 
+    // ── Codegen: double-click a widget → open companion -app.rs ──
+    {
+        let st = state.clone();
+        state.borrow().canvas.set_on_double_click(move |class, id| {
+            let s = st.borrow();
+            // Need the current .ui file path to derive the companion path
+            let ui_path = match s.notebook.current_tab().and_then(|t| t.path()) {
+                Some(p) if Canvas::is_ui_file(&p) => p,
+                _ => return, // not a .ui tab — nothing to do
+            };
+
+            // Get the current XML from the editor buffer
+            let xml = match s.notebook.current_tab() {
+                Some(tab) => {
+                    let (start, end) = tab.buffer().bounds();
+                    tab.buffer().text(&start, &end, false).to_string()
+                }
+                None => return,
+            };
+
+            let companion = crate::codegen::companion_path(&ui_path);
+
+            // Read or create the companion file
+            let existing = std::fs::read_to_string(&companion).unwrap_or_default();
+            let ui_filename = ui_path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
+
+            let new_content = if existing.is_empty() {
+                crate::codegen::generate_all_handlers(&xml, &ui_filename)
+            } else {
+                crate::codegen::merge_handlers(&existing, &xml, &ui_filename)
+            };
+
+            // Write the companion file
+            if let Err(e) = std::fs::write(&companion, &new_content) {
+                log::error!("Failed to write companion file: {}", e);
+                return;
+            }
+
+            // Open the companion in a new tab (or switch to it if already open)
+            s.notebook.open_file(&companion, &s.cfg);
+
+            // Force-refresh the buffer so there's no stale-disk prompt
+            if let Some(tab) = s.notebook.current_tab() {
+                tab.buffer().set_text(&new_content);
+                tab.buffer().set_modified(false);
+                *tab.last_mtime.borrow_mut() = std::fs::metadata(&companion)
+                    .ok()
+                    .and_then(|m| m.modified().ok());
+            }
+
+            // Find the handler function for this specific widget and jump to it
+            let mut counts = std::collections::BTreeMap::new();
+            let fn_name = crate::codegen::make_fn_name_pub(class, id, &mut counts);
+            if let Some(tab) = s.notebook.current_tab() {
+                if let Some(byte_off) = crate::codegen::find_handler_offset(&new_content, &fn_name) {
+                    let char_off = new_content[..byte_off].chars().count();
+                    let iter = tab.buffer().iter_at_offset(char_off as i32);
+                    tab.buffer().place_cursor(&iter);
+                    tab.view.scroll_to_iter(&mut iter.clone(), 0.1, true, 0.0, 0.3);
+                }
+            }
+        });
+    }
+
+    // Run → Generate All Handlers
+    {
+        let st = state.clone();
+        menubar::connect_action(app, "generate-handlers", move || {
+            let s = st.borrow();
+            let ui_path = match s.notebook.current_tab().and_then(|t| t.path()) {
+                Some(p) if Canvas::is_ui_file(&p) => p,
+                _ => {
+                    s.output.append_run_error(
+                        "Generate Handlers: open a .ui file first.",
+                    );
+                    s.output.show_panel();
+                    return;
+                }
+            };
+
+            let xml = {
+                let tab = s.notebook.current_tab().unwrap();
+                let (start, end) = tab.buffer().bounds();
+                tab.buffer().text(&start, &end, false).to_string()
+            };
+
+            let companion = crate::codegen::companion_path(&ui_path);
+            let existing = std::fs::read_to_string(&companion).unwrap_or_default();
+            let ui_filename = ui_path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
+
+            let new_content = if existing.is_empty() {
+                crate::codegen::generate_all_handlers(&xml, &ui_filename)
+            } else {
+                crate::codegen::merge_handlers(&existing, &xml, &ui_filename)
+            };
+
+            if let Err(e) = std::fs::write(&companion, &new_content) {
+                s.output.append_run_error(&format!(
+                    "Failed to write {}: {}",
+                    companion.display(),
+                    e
+                ));
+                s.output.show_panel();
+                return;
+            }
+
+            s.notebook.open_file(&companion, &s.cfg);
+
+            // Force-refresh the buffer so there's no stale-disk prompt
+            if let Some(tab) = s.notebook.current_tab() {
+                tab.buffer().set_text(&new_content);
+                tab.buffer().set_modified(false);
+                *tab.last_mtime.borrow_mut() = std::fs::metadata(&companion)
+                    .ok()
+                    .and_then(|m| m.modified().ok());
+            }
+
+            s.output.append_run_line(&format!(
+                "✓ Generated handlers → {}",
+                companion.display()
+            ));
+            s.output.show_panel();
+        });
+    }
+
     // AI → Open AI Chat
     #[cfg(feature = "preview")]
     {
