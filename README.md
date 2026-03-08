@@ -25,6 +25,7 @@ Rui (said like "Rooey" — **R** for Rust + **UI**) is a native GTK4 application
 
 ```sh
 # Prerequisites: GTK4, GtkSourceView 5, WebKitGTK 6 (optional)
+# On Arch:    sudo pacman -S gtk4 gtksourceview5 webkit2gtk-6.0
 # On Fedora:  sudo dnf install gtk4-devel gtksourceview5-devel webkit2gtk6.0-devel
 # On Ubuntu:  sudo apt install libgtk-4-dev libgtksourceview-5-dev libwebkitgtk-6.0-dev
 
