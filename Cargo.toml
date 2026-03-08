@@ -1,0 +1,29 @@
+[package]
+name = "rui"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "A GTK4 UI designer for Rust developers — edit .ui files with live preview"
+repository = "https://github.com/example/rui"  # TODO: update when repo is created
+
+[[bin]]
+name = "rui"
+path = "src/main.rs"
+
+[features]
+default = ["preview"]
+preview = ["dep:webkit6"]
+
+[dependencies]
+gtk4          = { version = "0.9", features = ["v4_10"] }
+sourceview5   = "0.9"
+dirs          = "6"
+serde         = { version = "1", features = ["derive"] }
+serde_json    = "1"
+toml          = "0.8"
+async-channel = "2"
+log           = "0.4"
+env_logger    = "0.11"
+
+# WebKit preview — optional, requires webkitgtk-6.0 system library
+webkit6 = { version = "0.4", optional = true }
