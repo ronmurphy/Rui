@@ -1,0 +1,32 @@
+use gtk4::prelude::*;
+use gtk4::Application;
+
+mod layout_app;
+
+fn main() {
+    let app = Application::builder()
+        .application_id("com.example.test2")
+        .build();
+
+    app.connect_activate(|app| {
+        let ui = include_str!("../layout.ui");
+        let builder = gtk4::Builder::from_string(ui);
+
+        layout_app::connect_handlers(&builder);
+
+        let window = gtk4::ApplicationWindow::builder()
+            .application(app)
+            .title("test2")
+            .default_width(400)
+            .default_height(300)
+            .build();
+
+        if let Some(root) = builder.object::<gtk4::Widget>("main_box") {
+            window.set_child(Some(&root));
+        }
+
+        window.present();
+    });
+
+    app.run();
+}

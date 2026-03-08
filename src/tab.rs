@@ -12,6 +12,8 @@ pub struct EditorTab {
     pub path:       std::rc::Rc<std::cell::RefCell<Option<PathBuf>>>,
     pub modified:   std::rc::Rc<std::cell::RefCell<bool>>,
     pub last_mtime: std::rc::Rc<std::cell::RefCell<Option<std::time::SystemTime>>>,
+    /// Suppresses the file-watcher reload prompt while a save is in flight.
+    pub saving:     std::rc::Rc<std::cell::Cell<bool>>,
 }
 
 impl EditorTab {
@@ -30,13 +32,14 @@ impl EditorTab {
         let path      = std::rc::Rc::new(std::cell::RefCell::new(None));
         let modified  = std::rc::Rc::new(std::cell::RefCell::new(false));
         let last_mtime = std::rc::Rc::new(std::cell::RefCell::new(None::<std::time::SystemTime>));
+        let saving     = std::rc::Rc::new(std::cell::Cell::new(false));
 
         let modified_clone = modified.clone();
         buffer.connect_modified_changed(move |buf| {
             *modified_clone.borrow_mut() = buf.is_modified();
         });
 
-        Self { view, scroll, path, modified, last_mtime }
+        Self { view, scroll, path, modified, last_mtime, saving }
     }
 
     pub fn load_file(&self, path: &Path) -> std::io::Result<()> {
@@ -61,6 +64,8 @@ impl EditorTab {
     }
 
     pub fn save_to(&self, path: &Path) -> std::io::Result<()> {
+        // Flag as saving so the file-watcher doesn't prompt "reload?"
+        self.saving.set(true);
         let buf = self.buffer();
         let (start, end) = buf.bounds();
         let text = buf.text(&start, &end, false);
@@ -71,10 +76,15 @@ impl EditorTab {
         *self.last_mtime.borrow_mut() = std::fs::metadata(path)
             .ok()
             .and_then(|m| m.modified().ok());
+        self.saving.set(false);
         Ok(())
     }
 
     pub fn apply_scheme(&self, scheme_id: &str) {
+        if scheme_id.is_empty() {
+            // Empty → let GtkSourceView use its default (follows GTK theme).
+            return;
+        }
         let mgr = StyleSchemeManager::default();
         if let Some(scheme) = mgr.scheme(scheme_id) {
             self.buffer().set_style_scheme(Some(&scheme));

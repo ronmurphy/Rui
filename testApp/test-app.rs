@@ -6,6 +6,8 @@
 
 use gtk4::prelude::*;
 use gtk4::{Button, CheckButton, DropDown, Expander, Scale, SearchEntry, SpinButton, ToggleButton};
+use gtk4::prelude::*;
+use gtk4::{AlertDialog, Button};
 
 /// Wire all widget signals to their handler functions.
 ///
@@ -173,5 +175,15 @@ fn on_button_clicked_6(widget: &Button) {
 /// Handler for GtkButton — signal "clicked"
 fn on_button_clicked_7(widget: &Button) {
     // TODO: implement handler
-}
+        let dialog = AlertDialog::builder()
+        .message("Hello from Rui!")
+        .detail("You clicked the button. Your primitive IDE works.")
+        .modal(true)
+        .build();
 
+    // Show it parented to the button's root window
+    let window = button.root().and_then(|r| r.downcast::<gtk4::Window>().ok());
+    dialog.show(window.as_ref());
+}
+    
+}

@@ -36,7 +36,7 @@ pub struct EditorConfig {
 
 fn default_font() -> String { "JetBrains Mono 13".into() }
 fn default_tab_width() -> u32 { 4 }
-fn default_scheme() -> String { "rui-theme".into() }
+fn default_scheme() -> String { String::new() }
 fn default_true() -> bool { true }
 
 impl Default for EditorConfig {
@@ -95,18 +95,13 @@ pub fn startup_dir(cfg: &EditorConfig) -> PathBuf {
     dirs::home_dir().unwrap_or_else(|| PathBuf::from("/tmp"))
 }
 
-/// Embedded default CSS for the editor UI.
+/// Embedded structural CSS for the editor UI.
+/// Colours are intentionally omitted so Rui follows the active GTK theme.
 pub fn default_css() -> String {
     r#"
-/* Rui default dark theme — Catppuccin Mocha inspired */
-.editor-sidebar {
-    background-color: #1e1e2e;
-    color: #cdd6f4;
-    border-right: 1px solid #313244;
-}
+/* Rui structural styles — no hardcoded colours */
 .editor-tab-label {
     padding: 4px 8px;
-    color: #cdd6f4;
 }
 .editor-tab-close {
     padding: 0 4px;
@@ -114,40 +109,23 @@ pub fn default_css() -> String {
     min-height: 16px;
     border: none;
     background: transparent;
-    color: #6c7086;
-}
-.editor-tab-close:hover {
-    color: #f38ba8;
 }
 .editor-tab-modified {
     font-style: italic;
 }
 .editor-statusbar {
-    background-color: #181825;
-    color: #a6adc8;
     padding: 2px 8px;
-    border-top: 1px solid #313244;
 }
 .editor-statusbar-item {
     padding: 0 8px;
     font-size: 0.9em;
 }
 .editor-statusbar-modified {
-    color: #f9e2af;
     font-weight: bold;
 }
-.editor-find-bar {
-    background-color: #1e1e2e;
-    border-top: 1px solid #313244;
-}
 .editor-output {
-    background-color: #11111b;
-    color: #cdd6f4;
     font-family: monospace;
     padding: 4px 8px;
-}
-.editor-preview-bar {
-    border-left: 1px solid #313244;
 }
 .editor-help-title {
     font-size: 1.4em;

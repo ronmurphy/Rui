@@ -35,8 +35,9 @@ mod ai_panel;
 fn main() {
     env_logger::init();
 
-    // Generate a GtkSourceView colour scheme before GTK initialises.
-    schemes::generate_rui_scheme();
+    // The rui-theme GtkSourceView scheme is available via
+    // schemes::generate_rui_scheme() if the user sets
+    // color_scheme = "rui-theme" in rui.toml.
 
     let app = Application::builder()
         .application_id("org.rui.designer")
@@ -64,6 +65,6 @@ fn load_css() {
     gtk4::style_context_add_provider_for_display(
         &gtk4::gdk::Display::default().expect("No display"),
         &css,
-        gtk4::STYLE_PROVIDER_PRIORITY_USER + 1,
+        gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
     );
 }

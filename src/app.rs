@@ -40,6 +40,9 @@ struct AppState {
     toolbox:   Toolbox,
     /// Current layout: "code" or "designer"
     layout:    String,
+    /// The project directory (set by Open Project / New Project).
+    /// Used by Run/Build to find the correct Cargo.toml.
+    project_dir: Option<PathBuf>,
 
     #[cfg(feature = "preview")]
     preview: PreviewPane,
@@ -177,6 +180,7 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         canvas:    canvas.clone(),
         toolbox:   toolbox.clone(),
         layout:    "code".into(),
+        project_dir: None,
         main_paned: main_paned.clone(),
         vert_paned: vert_paned.clone(),
         minimap:   minimap.clone(),
@@ -350,6 +354,75 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         });
     }
 
+    // File → New Project
+    {
+        let st = state.clone();
+        let win = window.clone();
+        menubar::connect_action(app, "new-project", move || {
+            let st2 = st.clone();
+            let dialog = FileDialog::builder()
+                .title("New Project — Select or Create a Folder")
+                .modal(true)
+                .build();
+            dialog.select_folder(Some(&win), gtk4::gio::Cancellable::NONE, move |result| {
+                if let Ok(folder) = result {
+                    if let Some(dir) = folder.path() {
+                        // Derive project name from folder name
+                        let project_name = dir
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_else(|| "my_app".into())
+                            .replace(' ', "_")
+                            .to_lowercase();
+
+                        if let Err(e) = crate::codegen::scaffold_project(&dir, &project_name) {
+                            log::error!("Failed to scaffold project: {}", e);
+                            return;
+                        }
+
+                        // Remember project directory for Run/Build
+                        st2.borrow_mut().project_dir = Some(dir.clone());
+
+                        let s = st2.borrow();
+
+                        // Point sidebar at the new project
+                        s.sidebar.set_root(&dir);
+
+                        // Open layout.ui in the editor
+                        let ui_path = dir.join("layout.ui");
+                        s.notebook.open_file(&ui_path, &s.cfg);
+
+                        // Activate canvas + toolbox for the .ui file
+                        if let Some(tab) = s.notebook.current_tab() {
+                            s.toolbox.set_buffer(&tab.buffer());
+                            s.canvas.widget.set_visible(true);
+                            s.toolbox.widget.set_visible(true);
+                            s.canvas.connect_buffer(&tab.buffer());
+                            s.toolbox.connect_buffer(&tab.buffer());
+                            let (start, end) = tab.buffer().bounds();
+                            let text = tab.buffer().text(&start, &end, false).to_string();
+                            s.canvas.render(&text);
+                        }
+
+                        // Also open main.rs so they can see the bootstrap
+                        let main_path = dir.join("src").join("main.rs");
+                        s.notebook.open_file(&main_path, &s.cfg);
+
+                        // Switch back to the .ui tab
+                        s.notebook.open_file(&ui_path, &s.cfg);
+
+                        s.output.append_run_line(&format!(
+                            "✓ Created project \"{}\" → {}",
+                            project_name,
+                            dir.display()
+                        ));
+                        s.output.show_panel();
+                    }
+                }
+            });
+        });
+    }
+
     // File → Open
     {
         let st = state.clone();
@@ -386,6 +459,52 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         });
     }
 
+    // File → Open Project
+    {
+        let st = state.clone();
+        let win = window.clone();
+        menubar::connect_action(app, "open-project", move || {
+            let st2 = st.clone();
+            let dialog = FileDialog::builder()
+                .title("Open Project Folder")
+                .modal(true)
+                .build();
+            dialog.select_folder(Some(&win), gtk4::gio::Cancellable::NONE, move |result| {
+                if let Ok(folder) = result {
+                    if let Some(dir) = folder.path() {
+                        // Remember project directory for Run/Build
+                        st2.borrow_mut().project_dir = Some(dir.clone());
+
+                        let s = st2.borrow();
+                        s.sidebar.set_root(&dir);
+
+                        // Auto-open layout.ui if it exists
+                        let ui_path = dir.join("layout.ui");
+                        if ui_path.exists() {
+                            s.notebook.open_file(&ui_path, &s.cfg);
+                            if let Some(tab) = s.notebook.current_tab() {
+                                s.toolbox.set_buffer(&tab.buffer());
+                                s.canvas.widget.set_visible(true);
+                                s.toolbox.widget.set_visible(true);
+                                s.canvas.connect_buffer(&tab.buffer());
+                                s.toolbox.connect_buffer(&tab.buffer());
+                                let (start, end) = tab.buffer().bounds();
+                                let text = tab.buffer().text(&start, &end, false).to_string();
+                                s.canvas.render(&text);
+                            }
+                        }
+
+                        s.output.append_run_line(&format!(
+                            "✓ Opened project → {}",
+                            dir.display()
+                        ));
+                        s.output.show_panel();
+                    }
+                }
+            });
+        });
+    }
+
     // File → Save
     {
         let st = state.clone();
@@ -400,6 +519,36 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
                         &st.borrow().window, "app.save-as", None
                     );
                 }
+            }
+        });
+    }
+
+    // File → Save All
+    {
+        let st = state.clone();
+        menubar::connect_action(app, "save-all", move || {
+            let s = st.borrow();
+            let mut saved = 0usize;
+            let mut failed = 0usize;
+            for tab in s.notebook.all_tabs() {
+                if tab.path().is_some() && tab.is_modified() {
+                    match tab.save() {
+                        Ok(()) => saved += 1,
+                        Err(e) => {
+                            log::error!("Save All: {}", e);
+                            failed += 1;
+                        }
+                    }
+                }
+            }
+            if failed > 0 {
+                s.output.append_run_error(&format!(
+                    "Save All: {} saved, {} failed", saved, failed
+                ));
+            } else if saved > 0 {
+                s.output.append_run_line(&format!(
+                    "✓ Saved {} file{}", saved, if saved == 1 { "" } else { "s" }
+                ));
             }
         });
     }
@@ -592,10 +741,21 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         let st = state.clone();
         menubar::connect_action(app, "run", move || {
             let s = st.borrow();
-            if let Some(tab) = s.notebook.current_tab() {
-                if tab.path().is_some() {
+            // Save all modified files before running
+            for tab in s.notebook.all_tabs() {
+                if tab.path().is_some() && tab.is_modified() {
                     let _ = tab.save();
                 }
+            }
+            // If a project dir is set with a Cargo.toml, use that
+            if let Some(ref pd) = s.project_dir {
+                if pd.join("Cargo.toml").exists() {
+                    s.runner.run_in_dir(pd, &["run"], &s.output);
+                    return;
+                }
+            }
+            // Fallback: run the current file
+            if let Some(tab) = s.notebook.current_tab() {
                 if let Some(path) = tab.path() {
                     let output = s.output.clone();
                     let runner = s.runner.clone();
@@ -618,48 +778,27 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         let st = state.clone();
         menubar::connect_action(app, "build", move || {
             let s = st.borrow();
-            if let Some(tab) = s.notebook.current_tab() {
-                let _ = tab.save();
+            // Save all modified files before building
+            for tab in s.notebook.all_tabs() {
+                if tab.path().is_some() && tab.is_modified() {
+                    let _ = tab.save();
+                }
+            }
+            // Resolve cargo directory: prefer project_dir, then walk up from current file
+            let cargo_dir = s.project_dir.clone()
+                .filter(|pd| pd.join("Cargo.toml").exists())
+                .or_else(|| {
+                    s.notebook.current_tab()
+                        .and_then(|t| t.path())
+                        .and_then(|p| find_cargo_toml_dir(&p))
+                });
+
+            if let Some(cd) = cargo_dir {
+                s.runner.run_in_dir(&cd, &["build"], &s.output);
+            } else if let Some(tab) = s.notebook.current_tab() {
                 if let Some(path) = tab.path() {
                     let output = s.output.clone();
                     let runner = s.runner.clone();
-                    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-                    if ext == "rs" {
-                        let cargo_dir = find_cargo_toml_dir(&path);
-                        if let Some(cd) = cargo_dir {
-                            output.clear_run();
-                            output.show_panel();
-                            output.switch_to_run();
-                            output.append_run_line("▶ cargo build");
-                            let (tx, rx) = async_channel::unbounded::<String>();
-                            std::thread::spawn(move || {
-                                let mut child = std::process::Command::new("cargo")
-                                    .arg("build")
-                                    .current_dir(&cd)
-                                    .stdout(std::process::Stdio::piped())
-                                    .stderr(std::process::Stdio::piped())
-                                    .spawn()
-                                    .unwrap();
-                                use std::io::BufRead;
-                                if let Some(out) = child.stderr.take() {
-                                    for line in std::io::BufReader::new(out).lines().flatten() {
-                                        let _ = tx.send_blocking(line);
-                                    }
-                                }
-                                let code = child.wait().ok().and_then(|s| s.code());
-                                let _ = tx.send_blocking(format!(
-                                    "── exit {} ──",
-                                    code.unwrap_or(-1)
-                                ));
-                            });
-                            gtk4::glib::spawn_future_local(async move {
-                                while let Ok(line) = rx.recv().await {
-                                    output.append_run_line(&line);
-                                }
-                            });
-                            return;
-                        }
-                    }
                     runner.run_file(&path, &output, || {}, |_| {});
                 }
             }
@@ -982,6 +1121,10 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
                     Some(p) => p,
                     None => continue,
                 };
+                // Skip tabs that are mid-save — the mtime will be stale
+                if tab.saving.get() {
+                    continue;
+                }
                 let current_mtime = match std::fs::metadata(&path)
                     .ok()
                     .and_then(|m| m.modified().ok())

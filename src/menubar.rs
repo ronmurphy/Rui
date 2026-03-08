@@ -7,11 +7,14 @@ pub fn build(app: &Application) -> gtk4::PopoverMenuBar {
 
     // ── File ─────────────────────────────────────────────────────
     let file_menu = Menu::new();
-    file_menu.append(Some("New"),     Some("app.new-tab"));
-    file_menu.append(Some("Open…"),  Some("app.open"));
-    file_menu.append(Some("Save"),    Some("app.save"));
-    file_menu.append(Some("Save As…"), Some("app.save-as"));
-    file_menu.append(Some("Close Tab"), Some("app.close-tab"));
+    file_menu.append(Some("New"),            Some("app.new-tab"));
+    file_menu.append(Some("New Project…"),  Some("app.new-project"));
+    file_menu.append(Some("Open…"),         Some("app.open"));
+    file_menu.append(Some("Open Project…"), Some("app.open-project"));
+    file_menu.append(Some("Save"),           Some("app.save"));
+    file_menu.append(Some("Save All"),       Some("app.save-all"));
+    file_menu.append(Some("Save As…"),      Some("app.save-as"));
+    file_menu.append(Some("Close Tab"),      Some("app.close-tab"));
 
     let file_item = MenuItem::new(Some("File"), None);
     file_item.set_submenu(Some(&file_menu));
@@ -82,7 +85,7 @@ pub fn build(app: &Application) -> gtk4::PopoverMenuBar {
     menubar_model.append_item(&help_item);
 
     for name in &[
-        "new-tab", "new-ui", "open", "save", "save-as", "close-tab",
+        "new-tab", "new-project", "new-ui", "open", "open-project", "save", "save-all", "save-as", "close-tab",
         "cut", "copy", "paste", "select-all", "find", "find-replace", "goto-line",
         "toggle-sidebar", "toggle-output", "toggle-canvas", "toggle-toolbox", "toggle-preview", "toggle-minimap",
         "layout-code", "layout-designer",

@@ -300,12 +300,122 @@ pub fn handler_for_widget(class: &str, id: &str) -> Option<String> {
     Some(snippet)
 }
 
-/// Compute the companion `-app.rs` path for a given `.ui` file.
-/// e.g. `/path/to/main.ui` → `/path/to/main-app.rs`
+/// Compute the companion handler file path for a given `.ui` file.
+///
+/// Project structure (has `src/` dir): `my_app/layout.ui` → `my_app/src/layout_app.rs`
+/// Legacy / standalone:                `dir/form.ui`      → `dir/form-app.rs`
 pub fn companion_path(ui_path: &Path) -> std::path::PathBuf {
     let stem = ui_path.file_stem().unwrap_or_default().to_string_lossy();
-    let parent = ui_path.parent().unwrap_or(Path::new("."));
-    parent.join(format!("{}-app.rs", stem))
+    let parent = ui_path.parent().unwrap_or(Path::new(""));
+
+    // Legacy: if a <stem>-app.rs already exists next to the .ui, keep using it
+    let legacy = parent.join(format!("{}-app.rs", stem));
+    if legacy.exists() {
+        return legacy;
+    }
+
+    // Project structure: if src/ exists, put module there with underscores
+    let src_dir = parent.join("src");
+    if src_dir.is_dir() {
+        let module_name = stem.replace('-', "_");
+        return src_dir.join(format!("{}_app.rs", module_name));
+    }
+
+    // Fallback: companion next to the .ui file
+    legacy
+}
+
+/// Scaffold a new GTK4 Rust project in the given directory.
+///
+/// Creates: `Cargo.toml`, `layout.ui`, `src/main.rs`, `src/layout_app.rs`
+pub fn scaffold_project(dir: &Path, project_name: &str) -> std::io::Result<()> {
+    let src_dir = dir.join("src");
+    std::fs::create_dir_all(&src_dir)?;
+
+    // ── Cargo.toml ──
+    let cargo_toml = format!(
+        r#"[package]
+name = "{name}"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+gtk4 = {{ version = "0.9", features = ["v4_10"] }}
+"#,
+        name = project_name
+    );
+    std::fs::write(dir.join("Cargo.toml"), &cargo_toml)?;
+
+    // ── layout.ui — starter template ──
+    let ui = r#"<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <object class="GtkBox" id="main_box">
+    <property name="orientation">vertical</property>
+    <property name="spacing">8</property>
+    <property name="margin-start">12</property>
+    <property name="margin-end">12</property>
+    <property name="margin-top">12</property>
+    <property name="margin-bottom">12</property>
+    <child>
+      <object class="GtkLabel" id="hello_label">
+        <property name="label">Hello, World!</property>
+      </object>
+    </child>
+    <child>
+      <object class="GtkButton" id="click_me">
+        <property name="label">Click Me</property>
+      </object>
+    </child>
+  </object>
+</interface>
+"#;
+    std::fs::write(dir.join("layout.ui"), ui)?;
+
+    // ── src/layout_app.rs — handler stubs generated from the template ──
+    let handlers = generate_all_handlers(ui, "layout.ui");
+    std::fs::write(src_dir.join("layout_app.rs"), &handlers)?;
+
+    // ── src/main.rs — GTK4 bootstrap ──
+    let main_rs = format!(
+        r#"use gtk4::prelude::*;
+use gtk4::Application;
+
+mod layout_app;
+
+fn main() {{
+    let app = Application::builder()
+        .application_id("com.example.{name}")
+        .build();
+
+    app.connect_activate(|app| {{
+        let ui = include_str!("../layout.ui");
+        let builder = gtk4::Builder::from_string(ui);
+
+        layout_app::connect_handlers(&builder);
+
+        let window = gtk4::ApplicationWindow::builder()
+            .application(app)
+            .title("{title}")
+            .default_width(400)
+            .default_height(300)
+            .build();
+
+        if let Some(root) = builder.object::<gtk4::Widget>("main_box") {{
+            window.set_child(Some(&root));
+        }}
+
+        window.present();
+    }});
+
+    app.run();
+}}
+"#,
+        name = project_name,
+        title = project_name
+    );
+    std::fs::write(src_dir.join("main.rs"), &main_rs)?;
+
+    Ok(())
 }
 
 /// Merge new handler stubs into an existing companion file.
@@ -419,10 +529,11 @@ mod tests {
 
     #[test]
     fn test_companion_path() {
-        let p = companion_path(Path::new("/home/user/my-app.ui"));
-        assert_eq!(p, std::path::PathBuf::from("/home/user/my-app-app.rs"));
+        // Non-existent dirs — falls back to legacy <stem>-app.rs
+        let p = companion_path(Path::new("/tmp/_rui_test_fake/my-app.ui"));
+        assert_eq!(p, std::path::PathBuf::from("/tmp/_rui_test_fake/my-app-app.rs"));
 
-        let p = companion_path(Path::new("form.ui"));
-        assert_eq!(p, std::path::PathBuf::from("form-app.rs"));
+        let p = companion_path(Path::new("/tmp/_rui_test_fake/form.ui"));
+        assert_eq!(p, std::path::PathBuf::from("/tmp/_rui_test_fake/form-app.rs"));
     }
 }
