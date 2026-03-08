@@ -47,6 +47,7 @@ pub fn build(app: &Application) -> gtk4::PopoverMenuBar {
     view_menu.append(Some("Toggle Toolbox"),  Some("app.toggle-toolbox"));
     view_menu.append(Some("Toggle Preview"),  Some("app.toggle-preview"));
     view_menu.append(Some("Toggle Minimap"),  Some("app.toggle-minimap"));
+    view_menu.append(Some("Toggle Dark Mode"), Some("app.toggle-dark"));
 
     let view_item = MenuItem::new(Some("View"), None);
     view_item.set_submenu(Some(&view_menu));
@@ -59,6 +60,7 @@ pub fn build(app: &Application) -> gtk4::PopoverMenuBar {
     run_menu.append(Some("Stop"),         Some("app.stop"));
     run_menu.append(Some("Open in Browser"), Some("app.open-browser"));
     run_menu.append(Some("Generate All Handlers"), Some("app.generate-handlers"));
+    run_menu.append(Some("Template Library…"), Some("app.template-library"));
 
     let run_item = MenuItem::new(Some("Run"), None);
     run_item.set_submenu(Some(&run_menu));
@@ -87,9 +89,9 @@ pub fn build(app: &Application) -> gtk4::PopoverMenuBar {
     for name in &[
         "new-tab", "new-project", "new-ui", "open", "open-project", "save", "save-all", "save-as", "close-tab",
         "cut", "copy", "paste", "select-all", "find", "find-replace", "goto-line",
-        "toggle-sidebar", "toggle-output", "toggle-canvas", "toggle-toolbox", "toggle-preview", "toggle-minimap",
+        "toggle-sidebar", "toggle-output", "toggle-canvas", "toggle-toolbox", "toggle-preview", "toggle-minimap", "toggle-dark",
         "layout-code", "layout-designer",
-        "run", "build", "stop", "open-browser", "generate-handlers",
+        "run", "build", "stop", "open-browser", "generate-handlers", "template-library",
         "ai-open", "ai-copy-file", "ai-copy-selection", "ai-apply-diff",
         "help", "about",
     ] {

@@ -490,6 +490,389 @@ pub fn find_handler_offset(source: &str, fn_name: &str) -> Option<usize> {
     source.find(&pattern)
 }
 
+// ── Template Library ───────────────────────────────────────────────
+
+/// Pre-built UI snippet templates.
+struct Template {
+    name: &'static str,
+    description: &'static str,
+    xml: &'static str,
+}
+
+const TEMPLATES: &[Template] = &[
+    Template {
+        name: "Login Form",
+        description: "Username + password entries with a Login button",
+        xml: r#"    <child>
+      <object class="GtkBox" id="login_form">
+        <property name="orientation">vertical</property>
+        <property name="spacing">8</property>
+        <property name="margin-start">24</property>
+        <property name="margin-end">24</property>
+        <property name="margin-top">24</property>
+        <property name="margin-bottom">24</property>
+        <child>
+          <object class="GtkLabel" id="login_title">
+            <property name="label">Sign In</property>
+            <attributes>
+              <attribute name="weight" value="bold"/>
+              <attribute name="scale" value="1.4"/>
+            </attributes>
+          </object>
+        </child>
+        <child>
+          <object class="GtkEntry" id="username_entry">
+            <property name="placeholder-text">Username</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkPasswordEntry" id="password_entry">
+            <property name="placeholder-text">Password</property>
+            <property name="show-peek-icon">true</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkButton" id="login_button">
+            <property name="label">Log In</property>
+          </object>
+        </child>
+      </object>
+    </child>"#,
+    },
+    Template {
+        name: "Header Bar",
+        description: "Titlebar with a title and close button",
+        xml: r#"    <child>
+      <object class="GtkHeaderBar" id="header_bar">
+        <property name="show-title-buttons">true</property>
+        <child type="title">
+          <object class="GtkLabel" id="header_title">
+            <property name="label">My Application</property>
+            <attributes>
+              <attribute name="weight" value="bold"/>
+            </attributes>
+          </object>
+        </child>
+        <child type="start">
+          <object class="GtkButton" id="back_button">
+            <property name="icon-name">go-previous-symbolic</property>
+          </object>
+        </child>
+        <child type="end">
+          <object class="GtkButton" id="menu_button">
+            <property name="icon-name">open-menu-symbolic</property>
+          </object>
+        </child>
+      </object>
+    </child>"#,
+    },
+    Template {
+        name: "List with Scrollbar",
+        description: "Scrollable list view with a model placeholder",
+        xml: r#"    <child>
+      <object class="GtkScrolledWindow" id="list_scroll">
+        <property name="hexpand">true</property>
+        <property name="vexpand">true</property>
+        <property name="min-content-height">200</property>
+        <child>
+          <object class="GtkListBox" id="item_list">
+            <property name="selection-mode">single</property>
+            <child>
+              <object class="GtkLabel">
+                <property name="label">Item 1</property>
+                <property name="xalign">0</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkLabel">
+                <property name="label">Item 2</property>
+                <property name="xalign">0</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkLabel">
+                <property name="label">Item 3</property>
+                <property name="xalign">0</property>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>"#,
+    },
+    Template {
+        name: "Search Bar",
+        description: "Search entry with a filter toggle",
+        xml: r#"    <child>
+      <object class="GtkBox" id="search_box">
+        <property name="orientation">horizontal</property>
+        <property name="spacing">4</property>
+        <child>
+          <object class="GtkSearchEntry" id="search_entry">
+            <property name="hexpand">true</property>
+            <property name="placeholder-text">Search…</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkToggleButton" id="filter_toggle">
+            <property name="icon-name">funnel-symbolic</property>
+            <property name="tooltip-text">Toggle filters</property>
+          </object>
+        </child>
+      </object>
+    </child>"#,
+    },
+    Template {
+        name: "Form Grid",
+        description: "Two-column label + entry form layout",
+        xml: r#"    <child>
+      <object class="GtkGrid" id="form_grid">
+        <property name="row-spacing">6</property>
+        <property name="column-spacing">12</property>
+        <property name="margin-start">12</property>
+        <property name="margin-end">12</property>
+        <property name="margin-top">12</property>
+        <property name="margin-bottom">12</property>
+        <child>
+          <object class="GtkLabel">
+            <property name="label">Name:</property>
+            <property name="xalign">1</property>
+            <layout>
+              <property name="column">0</property>
+              <property name="row">0</property>
+            </layout>
+          </object>
+        </child>
+        <child>
+          <object class="GtkEntry" id="name_entry">
+            <property name="hexpand">true</property>
+            <layout>
+              <property name="column">1</property>
+              <property name="row">0</property>
+            </layout>
+          </object>
+        </child>
+        <child>
+          <object class="GtkLabel">
+            <property name="label">Email:</property>
+            <property name="xalign">1</property>
+            <layout>
+              <property name="column">0</property>
+              <property name="row">1</property>
+            </layout>
+          </object>
+        </child>
+        <child>
+          <object class="GtkEntry" id="email_entry">
+            <property name="hexpand">true</property>
+            <layout>
+              <property name="column">1</property>
+              <property name="row">1</property>
+            </layout>
+          </object>
+        </child>
+        <child>
+          <object class="GtkButton" id="submit_button">
+            <property name="label">Submit</property>
+            <property name="halign">end</property>
+            <layout>
+              <property name="column">1</property>
+              <property name="row">2</property>
+            </layout>
+          </object>
+        </child>
+      </object>
+    </child>"#,
+    },
+    Template {
+        name: "Image + Caption",
+        description: "Picture widget with a caption label below",
+        xml: r#"    <child>
+      <object class="GtkBox" id="image_box">
+        <property name="orientation">vertical</property>
+        <property name="spacing">4</property>
+        <property name="halign">center</property>
+        <child>
+          <object class="GtkPicture" id="main_picture">
+            <property name="content-fit">contain</property>
+            <property name="width-request">320</property>
+            <property name="height-request">240</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkLabel" id="caption_label">
+            <property name="label">Caption goes here</property>
+            <property name="wrap">true</property>
+          </object>
+        </child>
+      </object>
+    </child>"#,
+    },
+    Template {
+        name: "Button Row",
+        description: "Horizontal row of OK / Cancel / Help buttons",
+        xml: r#"    <child>
+      <object class="GtkBox" id="button_row">
+        <property name="orientation">horizontal</property>
+        <property name="spacing">8</property>
+        <property name="halign">end</property>
+        <property name="margin-top">12</property>
+        <child>
+          <object class="GtkButton" id="help_button">
+            <property name="label">Help</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkButton" id="cancel_button">
+            <property name="label">Cancel</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkButton" id="ok_button">
+            <property name="label">OK</property>
+          </object>
+        </child>
+      </object>
+    </child>"#,
+    },
+    Template {
+        name: "Notebook (Tabbed)",
+        description: "Tabbed container with two placeholder pages",
+        xml: r#"    <child>
+      <object class="GtkNotebook" id="tab_notebook">
+        <child>
+          <object class="GtkNotebookPage">
+            <property name="child">
+              <object class="GtkLabel" id="page1_content">
+                <property name="label">Page 1 content</property>
+              </object>
+            </property>
+            <property name="tab">
+              <object class="GtkLabel">
+                <property name="label">Tab 1</property>
+              </object>
+            </property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkNotebookPage">
+            <property name="child">
+              <object class="GtkLabel" id="page2_content">
+                <property name="label">Page 2 content</property>
+              </object>
+            </property>
+            <property name="tab">
+              <object class="GtkLabel">
+                <property name="label">Tab 2</property>
+              </object>
+            </property>
+          </object>
+        </child>
+      </object>
+    </child>"#,
+    },
+];
+
+/// Show a modal Template Library dialog.
+/// User picks a template; its XML is inserted at the cursor in the current buffer.
+pub fn show_template_library(
+    parent: &gtk4::ApplicationWindow,
+    notebook: &crate::notebook::NotebookManager,
+    cfg: &crate::config::EditorConfig,
+) {
+    use gtk4::prelude::*;
+    use gtk4::{
+        Dialog, Label, ListBox, ListBoxRow, Orientation, Box as GtkBox,
+        ScrolledWindow, ResponseType,
+    };
+
+    let dialog = Dialog::builder()
+        .title("Template Library")
+        .transient_for(parent)
+        .modal(true)
+        .default_width(460)
+        .default_height(420)
+        .use_header_bar(1)
+        .build();
+
+    dialog.add_button("Cancel", ResponseType::Cancel);
+    let insert_btn = dialog.add_button("Insert", ResponseType::Accept);
+    insert_btn.add_css_class("suggested-action");
+
+    let content = dialog.content_area();
+    content.set_spacing(4);
+    content.set_margin_start(8);
+    content.set_margin_end(8);
+    content.set_margin_top(8);
+    content.set_margin_bottom(8);
+
+    let desc_label = Label::new(Some("Choose a template to insert at the cursor position."));
+    desc_label.set_halign(gtk4::Align::Start);
+    desc_label.set_margin_bottom(4);
+    content.append(&desc_label);
+
+    let listbox = ListBox::new();
+    listbox.set_selection_mode(gtk4::SelectionMode::Single);
+
+    for tmpl in TEMPLATES {
+        let row_box = GtkBox::new(Orientation::Vertical, 2);
+        row_box.set_margin_top(6);
+        row_box.set_margin_bottom(6);
+        row_box.set_margin_start(8);
+        row_box.set_margin_end(8);
+
+        let name_lbl = Label::new(Some(tmpl.name));
+        name_lbl.set_halign(gtk4::Align::Start);
+        name_lbl.add_css_class("heading");
+
+        let desc_lbl = Label::new(Some(tmpl.description));
+        desc_lbl.set_halign(gtk4::Align::Start);
+        desc_lbl.add_css_class("dim-label");
+
+        row_box.append(&name_lbl);
+        row_box.append(&desc_lbl);
+        listbox.append(&row_box);
+    }
+
+    listbox.select_row(listbox.row_at_index(0).as_ref());
+
+    let scroll = ScrolledWindow::builder()
+        .child(&listbox)
+        .hexpand(true)
+        .vexpand(true)
+        .min_content_height(300)
+        .build();
+    content.append(&scroll);
+    content.show();
+
+    let nb = notebook.clone();
+    let cfg = cfg.clone();
+    let lb = listbox.clone();
+    dialog.connect_response(move |dlg, resp| {
+        if resp == ResponseType::Accept {
+            if let Some(row) = lb.selected_row() {
+                let idx = row.index() as usize;
+                if idx < TEMPLATES.len() {
+                    let xml = TEMPLATES[idx].xml;
+                    // Insert into current tab's buffer at cursor
+                    if let Some(tab) = nb.current_tab() {
+                        let buf = tab.buffer();
+                        let mut cursor = buf.iter_at_mark(&buf.get_insert());
+                        buf.begin_user_action();
+                        buf.insert(&mut cursor, "\n");
+                        buf.insert(&mut cursor, xml);
+                        buf.insert(&mut cursor, "\n");
+                        buf.end_user_action();
+                    }
+                }
+            }
+        }
+        dlg.close();
+    });
+
+    dialog.present();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

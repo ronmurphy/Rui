@@ -10,7 +10,7 @@ use gtk4::{
     Box as GtkBox, Entry, Label, Orientation, ScrolledWindow, Separator,
 };
 use sourceview5::prelude::*;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 /// Parsed representation of a widget from the XML.
@@ -30,6 +30,8 @@ pub struct Inspector {
     target_buffer: Rc<RefCell<Option<sourceview5::Buffer>>>,
     /// Currently displayed properties — cleared and rebuilt on cursor move.
     entries: Rc<RefCell<Vec<(String, Entry)>>>,
+    /// Guard flag: true while clearing the panel to suppress focus-leave callbacks.
+    clearing: Rc<Cell<bool>>,
 }
 
 impl Inspector {
@@ -62,6 +64,7 @@ impl Inspector {
             header_label,
             target_buffer: Rc::new(RefCell::new(None)),
             entries: Rc::new(RefCell::new(Vec::new())),
+            clearing: Rc::new(Cell::new(false)),
         }
     }
 
@@ -110,12 +113,15 @@ impl Inspector {
     }
 
     fn clear_panel(&self) {
+        // Set clearing flag so focus-leave callbacks are suppressed
+        self.clearing.set(true);
         // Remove all children from content
         while let Some(child) = self.content.first_child() {
             self.content.remove(&child);
         }
         self.entries.borrow_mut().clear();
         self.header_label.set_text("Properties");
+        self.clearing.set(false);
     }
 
     fn show_widget_info(&self, buffer: &sourceview5::Buffer, info: &WidgetInfo) {
@@ -169,6 +175,23 @@ impl Inspector {
             entry.connect_activate(move |_| {
                 write_property_back(&buf, vs, ve, &entry_clone.text());
             });
+
+            // Also write back when focus leaves the entry
+            {
+                let buf2 = buffer.clone();
+                let vs2 = *val_start;
+                let ve2 = *val_end;
+                let entry2 = entry.clone();
+                let clearing = self.clearing.clone();
+                let focus = gtk4::EventControllerFocus::new();
+                focus.connect_leave(move |_| {
+                    // Don't write back if we're clearing the panel (entries being removed)
+                    if !clearing.get() {
+                        write_property_back(&buf2, vs2, ve2, &entry2.text());
+                    }
+                });
+                entry.add_controller(focus);
+            }
 
             entries.push((name.clone(), entry));
         }

@@ -191,6 +191,37 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
     }));
 
     // ── Connect notebook tab-switch → statusbar + minimap + canvas ──
+    // Wire clickable error locations in the output panel
+    {
+        let st = state.clone();
+        output.set_on_error_click(move |file, line, _col| {
+            let s = st.borrow();
+            // Resolve file path relative to project_dir if set
+            let abs_path = if let Some(ref pd) = s.project_dir {
+                pd.join(&file)
+            } else {
+                // Try relative to current tab's directory
+                s.notebook.current_tab()
+                    .and_then(|t| t.path())
+                    .and_then(|p| p.parent().map(|d| d.join(&file)))
+                    .unwrap_or(file)
+            };
+            if abs_path.exists() {
+                s.notebook.open_file(&abs_path, &s.cfg);
+                // Jump to the error line
+                if let Some(tab) = s.notebook.current_tab() {
+                    let target_line = (line - 1).max(0);
+                    let buf = tab.buffer();
+                    if let Some(iter) = buf.iter_at_line(target_line) {
+                        buf.place_cursor(&iter);
+                        // Scroll to cursor
+                        tab.view.scroll_to_iter(&mut buf.iter_at_mark(&buf.get_insert()), 0.1, false, 0.0, 0.5);
+                    }
+                }
+            }
+        });
+    }
+
     {
         let st = state.clone();
         notebook.on_switch(move |_, tab| {
@@ -700,6 +731,16 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         });
     }
 
+    // View → Toggle Dark Mode
+    {
+        menubar::connect_action(app, "toggle-dark", move || {
+            if let Some(settings) = gtk4::Settings::default() {
+                let dark = settings.is_gtk_application_prefer_dark_theme();
+                settings.set_gtk_application_prefer_dark_theme(!dark);
+            }
+        });
+    }
+
     // View → Layouts → Code View
     // Code-focused: full sidebar, no canvas, no palette, no preview, minimap on
     {
@@ -956,6 +997,16 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         });
     }
 
+    // Run → Template Library
+    {
+        let st = state.clone();
+        let win = window.clone();
+        menubar::connect_action(app, "template-library", move || {
+            let s = st.borrow();
+            crate::codegen::show_template_library(&win, &s.notebook, &s.cfg);
+        });
+    }
+
     // AI → Open AI Chat
     #[cfg(feature = "preview")]
     {
@@ -1066,6 +1117,7 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
     app.set_accels_for_action("app.toggle-toolbox",&["<Ctrl><Shift>T"]);
     app.set_accels_for_action("app.toggle-preview",&["<Ctrl><Shift>P"]);
     app.set_accels_for_action("app.toggle-minimap",&["<Ctrl>M"]);
+    app.set_accels_for_action("app.toggle-dark",   &["<Ctrl><Shift>D"]);
     app.set_accels_for_action("app.layout-code",   &["<Ctrl>1"]);
     app.set_accels_for_action("app.layout-designer",&["<Ctrl>2"]);
     app.set_accels_for_action("app.ai-open",        &["<Ctrl><Alt>A"]);
