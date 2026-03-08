@@ -181,9 +181,12 @@ impl Inspector {
 
 /// Find the `<object>` element surrounding the given byte offset.
 fn find_object_at_offset(xml: &str, offset: usize) -> Option<WidgetInfo> {
+    // Snap offset to a valid char boundary
+    let offset = snap_to_char_boundary(xml, offset);
+
     // Walk backwards from offset to find the nearest `<object` opening
-    let before = &xml[..offset.min(xml.len())];
-    let obj_start = before.rfind("<object")?;
+    let before = &xml[..offset];
+    let obj_start = before.rfind("<object")?;;
 
     // Find the matching `</object>` — handle nesting
     let after_start = &xml[obj_start..];
@@ -255,7 +258,9 @@ fn find_closing_object(s: &str) -> Option<usize> {
             }
             pos += 9;
         } else {
-            pos += 1;
+            // Advance by one UTF-8 character, not one byte
+            let ch_len = s[pos..].chars().next().map(|c| c.len_utf8()).unwrap_or(1);
+            pos += ch_len;
         }
     }
     None
@@ -274,9 +279,13 @@ fn write_property_back(buffer: &sourceview5::Buffer, val_start: usize, val_end: 
     let (buf_start, buf_end) = buffer.bounds();
     let full_text = buffer.text(&buf_start, &buf_end, false).to_string();
 
+    // Snap byte offsets to valid char boundaries before counting chars
+    let safe_start = snap_to_char_boundary(&full_text, val_start);
+    let safe_end = snap_to_char_boundary(&full_text, val_end);
+
     // Convert byte offsets to char offsets
-    let char_start = full_text[..val_start.min(full_text.len())].chars().count();
-    let char_end = full_text[..val_end.min(full_text.len())].chars().count();
+    let char_start = full_text[..safe_start].chars().count();
+    let char_end = full_text[..safe_end].chars().count();
 
     let mut start_iter = buffer.iter_at_offset(char_start as i32);
     let mut end_iter = buffer.iter_at_offset(char_end as i32);
@@ -285,6 +294,17 @@ fn write_property_back(buffer: &sourceview5::Buffer, val_start: usize, val_end: 
     buffer.delete(&mut start_iter, &mut end_iter);
     buffer.insert(&mut start_iter, new_value);
     buffer.end_user_action();
+}
+
+/// Snap a byte offset to the nearest valid UTF-8 char boundary (rounding down).
+fn snap_to_char_boundary(s: &str, offset: usize) -> usize {
+    let offset = offset.min(s.len());
+    // Walk backwards to find a valid char boundary
+    let mut pos = offset;
+    while pos > 0 && !s.is_char_boundary(pos) {
+        pos -= 1;
+    }
+    pos
 }
 
 fn make_label_row(label: &str, value: &str) -> GtkBox {
