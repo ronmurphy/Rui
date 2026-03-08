@@ -1,3 +1,5 @@
+<img width="152" height="152" alt="Rui" src="https://github.com/user-attachments/assets/219da171-2664-4761-8ae0-f6744c846aa5" />
+
 # Rui — A GTK4 UI Designer for Rust
 <img width="1200" height="830" alt="Screenshot_20260308_190813" src="https://github.com/user-attachments/assets/3d1c96c5-85c1-47d5-ba91-93750e218694" />
 

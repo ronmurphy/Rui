@@ -84,28 +84,47 @@ info "Installing rui -> $PREFIX/bin/rui (requires sudo)..."
 sudo install -Dm755 target/release/rui "$PREFIX/bin/rui"
 ok "Installed rui"
 
+# ─── Icon ───────────────────────────────────────────────────────
+
+ICON_SRC="$SCRIPT_DIR/data/org.rui.designer.svg"
+ICON_DST="/usr/share/icons/hicolor/scalable/apps/org.rui.designer.svg"
+
+if [[ -f "$ICON_SRC" ]]; then
+    info "Installing icon -> $ICON_DST"
+    sudo install -Dm644 "$ICON_SRC" "$ICON_DST"
+    sudo gtk-update-icon-cache -f /usr/share/icons/hicolor/ 2>/dev/null || true
+    ok "$ICON_DST"
+fi
+
 # ─── Desktop entry ──────────────────────────────────────────────
 
-info "Installing desktop entry..."
-DESKTOP_DIR="/usr/share/applications"
+DESKTOP_SRC="$SCRIPT_DIR/data/org.rui.designer.desktop"
 
-sudo tee "$DESKTOP_DIR/rui.desktop" > /dev/null <<EOF
+if [[ -f "$DESKTOP_SRC" ]]; then
+    info "Installing desktop entry..."
+    sudo install -Dm644 "$DESKTOP_SRC" /usr/share/applications/org.rui.designer.desktop
+    sudo update-desktop-database /usr/share/applications/ 2>/dev/null || true
+    ok "/usr/share/applications/org.rui.designer.desktop"
+else
+    info "Installing desktop entry (fallback)..."
+    sudo tee /usr/share/applications/org.rui.designer.desktop > /dev/null <<EOF
 [Desktop Entry]
 Name=Rui
 Comment=GTK4 UI Designer for Rust
 Exec=rui %F
-Icon=text-editor
+Icon=org.rui.designer
 Terminal=false
 Type=Application
 Categories=Development;GTK;
 MimeType=application/x-gtk-builder;application/xml;
 EOF
-
-ok "$DESKTOP_DIR/rui.desktop"
+    ok "/usr/share/applications/org.rui.designer.desktop"
+fi
 
 echo ""
 echo -e "${GREEN}${BOLD}  ✓ Rui installed successfully.${NC}"
 echo ""
 echo "  Run:  rui"
 echo "  Or open .ui files with Rui from your file manager."
+echo "  Uninstall:  ./install.sh --uninstall"
 echo ""

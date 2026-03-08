@@ -1,0 +1,12 @@
+[Desktop Entry]
+Name=Rui
+Comment=GTK4 UI Designer for Rust
+GenericName=UI Designer
+Exec=rui %F
+Icon=org.rui.designer
+Terminal=false
+Type=Application
+Categories=Development;GTK;IDE;
+MimeType=application/x-gtk-builder;application/xml;
+Keywords=GTK;Rust;UI;Designer;Builder;
+StartupNotify=true
