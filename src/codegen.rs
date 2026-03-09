@@ -105,6 +105,11 @@ pub fn make_fn_name_pub(class: &str, id: &str, counts: &mut BTreeMap<String, usi
     make_fn_name_inner(class, id, counts)
 }
 
+/// Returns true if this widget class has a known signal mapping for codegen.
+pub fn has_signal(class: &str) -> bool {
+    signal_for_class(class).is_some()
+}
+
 fn make_fn_name_inner(class: &str, id: &str, counts: &mut BTreeMap<String, usize>) -> String {
     let base = if !id.is_empty() {
         // Sanitise the id to a valid Rust identifier
@@ -119,8 +124,11 @@ fn make_fn_name_inner(class: &str, id: &str, counts: &mut BTreeMap<String, usize
         camel_to_snake(short)
     };
 
-    let (signal_word, _connect, _params) = signal_for_class(class).unwrap();
-    let verb = signal_word.split('-').next().unwrap_or("activated");
+    let verb = signal_for_class(class)
+        .map(|(signal_word, _, _)| {
+            signal_word.split('-').next().unwrap_or("activated")
+        })
+        .unwrap_or("activated");
 
     let candidate = format!("on_{}_{}", base, verb);
 

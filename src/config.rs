@@ -131,5 +131,19 @@ pub fn default_css() -> String {
     font-size: 1.4em;
     font-weight: bold;
 }
+/* Canvas selection + drag-to-reorder feedback */
+.canvas-selected {
+    outline: 2px solid #3584e4;
+    outline-offset: 1px;
+    border-radius: 4px;
+}
+.drag-active {
+    opacity: 0.4;
+}
+.drop-hover {
+    outline: 2px dashed alpha(currentColor, 0.6);
+    outline-offset: 2px;
+    border-radius: 4px;
+}
 "#.to_string()
 }

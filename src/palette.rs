@@ -468,9 +468,52 @@ impl Palette {
     }
 }
 
-/// Insert an XML snippet at the cursor, wrapped in `<child>` tags,
-/// and auto-indented to match the current cursor indentation.
+/// Insert a widget snippet as a `<child>` of the container surrounding the cursor.
+/// Falls back to raw cursor insertion if no container is found.
 fn insert_snippet(buffer: &sourceview5::Buffer, snippet: &str) {
+    let (buf_start, buf_end) = buffer.bounds();
+    let full_text = buffer.text(&buf_start, &buf_end, false).to_string();
+    let cursor = buffer.iter_at_mark(&buffer.get_insert());
+    let cursor_char = cursor.offset() as usize;
+
+    // Convert char offset to byte offset
+    let cursor_byte = full_text
+        .char_indices()
+        .nth(cursor_char)
+        .map(|(i, _)| i)
+        .unwrap_or(full_text.len());
+
+    // Try to find the nearest container and insert before its </object>
+    if let Some(insert_byte) = find_container_insert_point(&full_text, cursor_byte) {
+        // Determine indentation from the </object> line
+        let before_close = &full_text[..insert_byte];
+        let last_nl = before_close.rfind('\n').map(|i| i + 1).unwrap_or(0);
+        let close_line = &full_text[last_nl..insert_byte];
+        let base_indent: String = close_line
+            .chars()
+            .take_while(|c| c.is_whitespace())
+            .collect();
+
+        let mut result = String::new();
+        result.push_str(&format!("  {}<child>\n", base_indent));
+        for line in snippet.lines() {
+            result.push_str(&format!("  {}  {}\n", base_indent, line));
+        }
+        result.push_str(&format!("  {}</child>\n", base_indent));
+
+        let insert_char = full_text[..insert_byte].chars().count();
+        let mut iter = buffer.iter_at_offset(insert_char as i32);
+        buffer.begin_user_action();
+        buffer.insert(&mut iter, &result);
+        buffer.end_user_action();
+    } else {
+        // Fallback: insert at cursor with local indentation
+        insert_snippet_at_cursor(buffer, snippet);
+    }
+}
+
+/// Fallback: insert snippet wrapped in `<child>` at the current cursor position.
+fn insert_snippet_at_cursor(buffer: &sourceview5::Buffer, snippet: &str) {
     let cursor = buffer.iter_at_mark(&buffer.get_insert());
 
     // Figure out the indentation at the cursor line
@@ -494,4 +537,104 @@ fn insert_snippet(buffer: &sourceview5::Buffer, snippet: &str) {
     buffer.begin_user_action();
     buffer.insert(&mut buffer.iter_at_mark(&buffer.get_insert()), &result);
     buffer.end_user_action();
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// XML helpers for smart insertion
+// ─────────────────────────────────────────────────────────────────────
+
+/// Find the byte offset where a new `<child>` should be inserted,
+/// inside the nearest enclosing container `<object>`.
+/// Returns the byte offset of the `</object>` closing tag.
+fn find_container_insert_point(xml: &str, cursor_byte: usize) -> Option<usize> {
+    let safe_cursor = cursor_byte.min(xml.len());
+    let mut search_from = safe_cursor;
+
+    loop {
+        let before = &xml[..search_from];
+        let obj_start = before.rfind("<object")?;
+
+        // Extract class from the <object ...> tag
+        let tag_end_rel = xml[obj_start..].find('>')?;
+        let tag = &xml[obj_start..obj_start + tag_end_rel + 1];
+        let class = extract_class_from_tag(tag);
+
+        // Find matching </object>
+        let remainder = &xml[obj_start..];
+        let close_end = find_matching_close_object(remainder)?;
+        let obj_close_abs = obj_start + close_end;
+
+        // Check cursor is inside this object
+        if safe_cursor <= obj_close_abs {
+            if let Some(cls) = &class {
+                if is_container_class(cls) {
+                    // Insert point: right before the </object> closing tag
+                    let close_tag_rel = remainder[..close_end].rfind("</object>")?;
+                    return Some(obj_start + close_tag_rel);
+                }
+            }
+        }
+
+        // Not a container or cursor outside — try parent
+        if obj_start == 0 {
+            return None;
+        }
+        search_from = obj_start;
+    }
+}
+
+/// Find the end of the matching `</object>` (byte offset relative to input start).
+fn find_matching_close_object(s: &str) -> Option<usize> {
+    let mut depth = 0i32;
+    let mut pos = 0;
+    while pos < s.len() {
+        if s[pos..].starts_with("<object") {
+            depth += 1;
+            pos += 7;
+        } else if s[pos..].starts_with("</object>") {
+            depth -= 1;
+            if depth == 0 {
+                return Some(pos + "</object>".len());
+            }
+            pos += 9;
+        } else {
+            let ch_len = s[pos..].chars().next().map(|c| c.len_utf8()).unwrap_or(1);
+            pos += ch_len;
+        }
+    }
+    None
+}
+
+/// Extract the `class` attribute from an `<object ...>` tag string.
+fn extract_class_from_tag(tag: &str) -> Option<String> {
+    let start = tag.find("class=\"")? + "class=\"".len();
+    let end = tag[start..].find('"')? + start;
+    Some(tag[start..end].to_string())
+}
+
+/// Check if a GTK class is a container that accepts `<child>` elements.
+fn is_container_class(class: &str) -> bool {
+    matches!(
+        class,
+        "GtkBox"
+            | "GtkGrid"
+            | "GtkFrame"
+            | "GtkScrolledWindow"
+            | "GtkPaned"
+            | "GtkNotebook"
+            | "GtkStack"
+            | "GtkOverlay"
+            | "GtkCenterBox"
+            | "GtkExpander"
+            | "GtkFlowBox"
+            | "GtkListBox"
+            | "GtkHeaderBar"
+            | "GtkActionBar"
+            | "GtkWindow"
+            | "GtkApplicationWindow"
+            | "GtkDialog"
+            | "GtkPopover"
+            | "GtkRevealer"
+            | "GtkViewport"
+    )
 }

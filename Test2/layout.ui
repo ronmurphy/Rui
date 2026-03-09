@@ -13,9 +13,33 @@
       </object>
     </child>
     <child>
-      <object class="GtkButton" id="click_me">
-        <property name="label">Click Me</property>
-      </object>
+      <object class="GtkGrid">
+        <property name="row-spacing">8</property>
+        <property name="column-spacing">8</property>
+        <child>
+          <object class="GtkLabel">
+            <property name="label">Name Here</property>
+            <layout>
+              <property name="column">2</property>
+              <property name="row">2</property>
+            </layout>
+          </object>
+        </child>
+              <child>
+          <object class="GtkFrame">
+            <property name="label">Name Here</property>
+            <child>
+              <!-- Frame content -->
+            </child>
+          </object>
+        </child>
+
+  <child>
+        <object class="GtkButton" id="click_me">
+          <property name="label">Click Me</property>
+        </object>
+      </child>
+</object>
     </child>
-  </object>
+</object>
 </interface>

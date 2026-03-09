@@ -32,6 +32,8 @@ pub struct Inspector {
     entries: Rc<RefCell<Vec<(String, Entry)>>>,
     /// Guard flag: true while clearing the panel to suppress focus-leave callbacks.
     clearing: Rc<Cell<bool>>,
+    /// Guard flag: true while writing a property back to suppress re-entry.
+    writing: Rc<Cell<bool>>,
 }
 
 impl Inspector {
@@ -65,6 +67,7 @@ impl Inspector {
             target_buffer: Rc::new(RefCell::new(None)),
             entries: Rc::new(RefCell::new(Vec::new())),
             clearing: Rc::new(Cell::new(false)),
+            writing: Rc::new(Cell::new(false)),
         }
     }
 
@@ -88,6 +91,10 @@ impl Inspector {
 
         // GtkTextBuffer emits "notify::cursor-position" when the insert mark moves
         buffer.connect_cursor_position_notify(move |_| {
+            // Skip if we're in the middle of writing a property back
+            if inspector.writing.get() {
+                return;
+            }
             inspector.update_from_cursor(&buf);
         });
     }
@@ -99,7 +106,7 @@ impl Inspector {
         let cursor = buffer.iter_at_mark(&buffer.get_insert());
         let cursor_offset = cursor.offset() as usize;
 
-        // Convert char offset to byte offset (approximate — works for ASCII-heavy XML)
+        // Convert char offset to byte offset
         let byte_offset = full_text
             .char_indices()
             .nth(cursor_offset)
@@ -149,7 +156,7 @@ impl Inspector {
 
         // Editable property rows
         let mut entries = self.entries.borrow_mut();
-        for (name, value, val_start, val_end) in &info.properties {
+        for (name, value, _val_start, _val_end) in &info.properties {
             let row = GtkBox::new(Orientation::Vertical, 1);
             row.set_margin_top(2);
             row.set_margin_bottom(2);
@@ -167,27 +174,29 @@ impl Inspector {
             row.append(&entry);
             self.content.append(&row);
 
-            // When the user presses Enter or leaves the entry, write back to XML
-            let buf = buffer.clone();
-            let vs = *val_start;
-            let ve = *val_end;
-            let entry_clone = entry.clone();
-            entry.connect_activate(move |_| {
-                write_property_back(&buf, vs, ve, &entry_clone.text());
-            });
+            // When the user presses Enter, write back to XML
+            {
+                let buf = buffer.clone();
+                let prop_name = name.clone();
+                let entry_clone = entry.clone();
+                let writing = self.writing.clone();
+                entry.connect_activate(move |_| {
+                    write_property_by_name(&buf, &prop_name, &entry_clone.text(), &writing);
+                });
+            }
 
             // Also write back when focus leaves the entry
             {
                 let buf2 = buffer.clone();
-                let vs2 = *val_start;
-                let ve2 = *val_end;
+                let prop_name2 = name.clone();
                 let entry2 = entry.clone();
                 let clearing = self.clearing.clone();
+                let writing = self.writing.clone();
                 let focus = gtk4::EventControllerFocus::new();
                 focus.connect_leave(move |_| {
                     // Don't write back if we're clearing the panel (entries being removed)
-                    if !clearing.get() {
-                        write_property_back(&buf2, vs2, ve2, &entry2.text());
+                    if !clearing.get() && !writing.get() {
+                        write_property_by_name(&buf2, &prop_name2, &entry2.text(), &writing);
                     }
                 });
                 entry.add_controller(focus);
@@ -209,7 +218,7 @@ fn find_object_at_offset(xml: &str, offset: usize) -> Option<WidgetInfo> {
 
     // Walk backwards from offset to find the nearest `<object` opening
     let before = &xml[..offset];
-    let obj_start = before.rfind("<object")?;;
+    let obj_start = before.rfind("<object")?;
 
     // Find the matching `</object>` — handle nesting
     let after_start = &xml[obj_start..];
@@ -227,7 +236,7 @@ fn find_object_at_offset(xml: &str, offset: usize) -> Option<WidgetInfo> {
     // Extract id (optional)
     let id = extract_attr(block, "id");
 
-    // Extract properties
+    // Extract properties — only direct properties (not nested child objects)
     let mut properties = Vec::new();
     let mut search_from = 0;
     while let Some(prop_start) = block[search_from..].find("<property name=\"") {
@@ -236,24 +245,34 @@ fn find_object_at_offset(xml: &str, offset: usize) -> Option<WidgetInfo> {
 
         // Get property name
         let name_start = "<property name=\"".len();
-        let name_end = tag_content[name_start..].find('"')?;
+        let name_end = match tag_content[name_start..].find('"') {
+            Some(e) => e,
+            None => break,
+        };
         let prop_name = tag_content[name_start..name_start + name_end].to_string();
 
         // Find the > that closes the opening tag
-        let gt = tag_content.find('>')?;
-        let val_start_in_block = abs_prop + gt + 1;
+        let gt = match tag_content.find('>') {
+            Some(g) => g,
+            None => break,
+        };
 
-        // Find </property>
-        let close = tag_content.find("</property>")?;
+        // Skip properties that contain inline objects (e.g. <property name="adjustment"><object...>)
+        let val_start_in_block = abs_prop + gt + 1;
+        let close = match tag_content.find("</property>") {
+            Some(c) => c,
+            None => break,
+        };
         let val_end_in_block = abs_prop + close;
 
-        let value = block[val_start_in_block..val_end_in_block].to_string();
+        let value_text = &block[val_start_in_block..val_end_in_block];
 
-        // Convert block-relative offsets to absolute XML offsets
-        let abs_val_start = obj_start + val_start_in_block;
-        let abs_val_end = obj_start + val_end_in_block;
-
-        properties.push((prop_name, value, abs_val_start, abs_val_end));
+        // Skip if the value contains an <object> (inline child, not editable as text)
+        if !value_text.contains("<object") {
+            let abs_val_start = obj_start + val_start_in_block;
+            let abs_val_end = obj_start + val_end_in_block;
+            properties.push((prop_name, value_text.to_string(), abs_val_start, abs_val_end));
+        }
 
         search_from = abs_prop + close + "</property>".len();
     }
@@ -297,18 +316,76 @@ fn extract_attr(tag: &str, attr: &str) -> Option<String> {
     Some(tag[start..end].to_string())
 }
 
-/// Write an edited property value back into the buffer at the original byte offsets.
-fn write_property_back(buffer: &sourceview5::Buffer, val_start: usize, val_end: usize, new_value: &str) {
+/// Write an edited property value back into the buffer, looking up the
+/// property by name in the *current* buffer text to get fresh byte offsets.
+/// This avoids stale-offset bugs when multiple properties are edited.
+fn write_property_by_name(
+    buffer: &sourceview5::Buffer,
+    prop_name: &str,
+    new_value: &str,
+    writing: &Rc<Cell<bool>>,
+) {
+    // Prevent re-entry: buffer changes fire cursor-position-notify which
+    // would rebuild the inspector while we're still modifying the buffer.
+    if writing.get() {
+        return;
+    }
+    writing.set(true);
+
     let (buf_start, buf_end) = buffer.bounds();
     let full_text = buffer.text(&buf_start, &buf_end, false).to_string();
 
-    // Snap byte offsets to valid char boundaries before counting chars
-    let safe_start = snap_to_char_boundary(&full_text, val_start);
-    let safe_end = snap_to_char_boundary(&full_text, val_end);
+    // Find the cursor position to locate which <object> we're editing
+    let cursor = buffer.iter_at_mark(&buffer.get_insert());
+    let cursor_char = cursor.offset() as usize;
+    let cursor_byte = full_text
+        .char_indices()
+        .nth(cursor_char)
+        .map(|(i, _)| i)
+        .unwrap_or(full_text.len());
+
+    // Find the enclosing <object> block
+    let safe_cursor = snap_to_char_boundary(&full_text, cursor_byte);
+    let obj_start = match full_text[..safe_cursor].rfind("<object") {
+        Some(s) => s,
+        None => { writing.set(false); return; }
+    };
+
+    // Find matching </object>
+    let obj_rest = &full_text[obj_start..];
+    let obj_end = match find_closing_object(obj_rest) {
+        Some(e) => e,
+        None => { writing.set(false); return; }
+    };
+    let block = &full_text[obj_start..obj_start + obj_end];
+
+    // Search for the property by name within this block
+    let search_pattern = format!("<property name=\"{}\">", prop_name);
+    let prop_offset = match block.find(&search_pattern) {
+        Some(o) => o,
+        None => { writing.set(false); return; }
+    };
+
+    let val_start_in_block = prop_offset + search_pattern.len();
+    let remaining = &block[val_start_in_block..];
+    let val_len = match remaining.find("</property>") {
+        Some(l) => l,
+        None => { writing.set(false); return; }
+    };
+
+    let abs_val_start = obj_start + val_start_in_block;
+    let abs_val_end = abs_val_start + val_len;
+
+    // Check if value actually changed
+    let old_value = &full_text[abs_val_start..abs_val_end];
+    if old_value == new_value {
+        writing.set(false);
+        return;
+    }
 
     // Convert byte offsets to char offsets
-    let char_start = full_text[..safe_start].chars().count();
-    let char_end = full_text[..safe_end].chars().count();
+    let char_start = full_text[..abs_val_start].chars().count();
+    let char_end = full_text[..abs_val_end].chars().count();
 
     let mut start_iter = buffer.iter_at_offset(char_start as i32);
     let mut end_iter = buffer.iter_at_offset(char_end as i32);
@@ -317,12 +394,13 @@ fn write_property_back(buffer: &sourceview5::Buffer, val_start: usize, val_end: 
     buffer.delete(&mut start_iter, &mut end_iter);
     buffer.insert(&mut start_iter, new_value);
     buffer.end_user_action();
+
+    writing.set(false);
 }
 
 /// Snap a byte offset to the nearest valid UTF-8 char boundary (rounding down).
 fn snap_to_char_boundary(s: &str, offset: usize) -> usize {
     let offset = offset.min(s.len());
-    // Walk backwards to find a valid char boundary
     let mut pos = offset;
     while pos > 0 && !s.is_char_boundary(pos) {
         pos -= 1;

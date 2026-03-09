@@ -870,6 +870,10 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
     {
         let st = state.clone();
         state.borrow().canvas.set_on_double_click(move |class, id| {
+            // Only generate handlers for interactive widgets that have signals
+            if !crate::codegen::has_signal(class) {
+                return;
+            }
             let s = st.borrow();
             // Need the current .ui file path to derive the companion path
             let ui_path = match s.notebook.current_tab().and_then(|t| t.path()) {

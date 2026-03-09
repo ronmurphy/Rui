@@ -10,10 +10,10 @@
 
 use gtk4::prelude::*;
 use gtk4::{
-    Adjustment, Box as GtkBox, Button, CenterBox, CheckButton, DropDown,
-    Entry, Expander, Frame, GestureClick, Grid, HeaderBar, Image, Label,
-    LevelBar, ListBox, Notebook, Orientation, Overlay, Paned,
-    PasswordEntry, ProgressBar, Scale, ScrolledWindow, SearchEntry,
+    Adjustment, Box as GtkBox, Button, CenterBox, CheckButton,
+    DropDown, Entry, Expander, Frame, GestureClick, Grid, HeaderBar, Image,
+    Label, LevelBar, ListBox, Notebook, Orientation, Overlay, Paned,
+    PasswordEntry, Popover, ProgressBar, Scale, ScrolledWindow, SearchEntry,
     Separator, SpinButton, Spinner, Switch, TextView, ToggleButton,
     Widget,
 };
@@ -37,6 +37,8 @@ struct ClickCtx {
     xml: Rc<String>,
     /// Optional double-click callback for codegen.
     on_double_click: DblClickCb,
+    /// Currently selected widget — used to show/hide the selection outline.
+    selected_widget: Rc<RefCell<Option<Widget>>>,
 }
 
 /// The live preview panel shown beside the editor.
@@ -130,6 +132,7 @@ impl Canvas {
             buffer: self.source_buffer.clone(),
             xml: Rc::new(xml.to_owned()),
             on_double_click: self.on_double_click.clone(),
+            selected_widget: Rc::new(RefCell::new(None)),
         };
 
         // Find all top-level <object> nodes (may be wrapped in <interface>)
@@ -451,11 +454,14 @@ fn collect_combobox_items(node: roxmltree::Node) -> Vec<String> {
 fn attach_click_to_select(widget: &Widget, byte_offset: usize, ctx: &ClickCtx, class: &str, id: &str) {
     let gesture = GestureClick::new();
     gesture.set_button(1); // left click
+    // Use BUBBLE phase so DragSource (which uses CAPTURE internally) gets first chance
+    gesture.set_propagation_phase(gtk4::PropagationPhase::Bubble);
 
     let buf_ref = ctx.buffer.clone();
     let xml_rc = ctx.xml.clone();
     let is_expander = class == "GtkExpander";
     let widget_ref = widget.clone();
+    let selected_ref = ctx.selected_widget.clone();
     let dbl_click_cb = ctx.on_double_click.clone();
     let class_owned = class.to_string();
     let id_owned = id.to_string();
@@ -464,6 +470,15 @@ fn attach_click_to_select(widget: &Widget, byte_offset: usize, ctx: &ClickCtx, c
         // Stop propagation so clicking a leaf widget doesn't also fire
         // on every ancestor container
         gesture.set_state(gtk4::EventSequenceState::Claimed);
+
+        // ── Selection outline ──
+        // Remove outline from previously-selected widget
+        if let Some(prev) = selected_ref.borrow_mut().take() {
+            prev.remove_css_class("canvas-selected");
+        }
+        // Highlight the newly-selected widget
+        widget_ref.add_css_class("canvas-selected");
+        *selected_ref.borrow_mut() = Some(widget_ref.clone());
 
         // For Expander: toggle expand/collapse since we claimed the click
         // that would normally do this
@@ -514,7 +529,132 @@ fn build_widget(node: roxmltree::Node, ctx: &ClickCtx) -> Option<Widget> {
                 .unwrap_or(0);
             let b = GtkBox::new(orientation, spacing);
             apply_common_props(&b, &props);
-            for (_ty, child) in &children {
+
+            // Collect child byte ranges and class names for reorder / insert-into
+            let child_ranges: Rc<Vec<std::ops::Range<usize>>> = Rc::new(
+                collect_child_ranges(node)
+            );
+            let sibling_classes: Rc<Vec<String>> = Rc::new(
+                collect_sibling_classes(node)
+            );
+            let n_children = children.len();
+
+            for (i, (_ty, child)) in children.iter().enumerate() {
+                // Right-click on child → popover with Move Up / Move Down / ↵ Into
+                if n_children > 1 && i < child_ranges.len() {
+                    let rc_gesture = GestureClick::new();
+                    rc_gesture.set_button(3); // right-click
+                    let idx = i;
+                    let ranges = child_ranges.clone();
+                    let classes = sibling_classes.clone();
+                    let buf_ref = ctx.buffer.clone();
+                    let xml_rc = ctx.xml.clone();
+                    let child_for_popover = child.clone();
+
+                    rc_gesture.connect_pressed(move |gesture, _n, _x, _y| {
+                        gesture.set_state(gtk4::EventSequenceState::Claimed);
+
+                        // Build a small popover with Up / Down / ↵ Into buttons
+                        let pop_box = GtkBox::new(Orientation::Horizontal, 4);
+                        pop_box.set_margin_start(4);
+                        pop_box.set_margin_end(4);
+                        pop_box.set_margin_top(4);
+                        pop_box.set_margin_bottom(4);
+
+                        let up_btn = Button::with_label("▲ Up");
+                        up_btn.add_css_class("flat");
+                        up_btn.set_sensitive(idx > 0);
+
+                        let down_btn = Button::with_label("▼ Down");
+                        down_btn.add_css_class("flat");
+                        down_btn.set_sensitive(idx + 1 < ranges.len());
+
+                        // "↵ Into" — insert this child into an adjacent container
+                        let into_btn = Button::with_label("↵ Into");
+                        into_btn.add_css_class("flat");
+                        // Sensitive if an adjacent sibling is a container
+                        let has_container_neighbor = {
+                            let above_is_container = idx > 0
+                                && classes.get(idx - 1).map_or(false, |c| is_container_class(c));
+                            let below_is_container = (idx + 1 < classes.len())
+                                && classes.get(idx + 1).map_or(false, |c| is_container_class(c));
+                            above_is_container || below_is_container
+                        };
+                        into_btn.set_sensitive(has_container_neighbor);
+
+                        pop_box.append(&up_btn);
+                        pop_box.append(&down_btn);
+                        pop_box.append(&into_btn);
+
+                        let popover = Popover::new();
+                        popover.set_child(Some(&pop_box));
+                        popover.set_parent(&child_for_popover);
+                        popover.set_autohide(true);
+
+                        // Move Up
+                        {
+                            let buf = buf_ref.clone();
+                            let xml = xml_rc.clone();
+                            let r = ranges.clone();
+                            let from = idx;
+                            let pop = popover.clone();
+                            up_btn.connect_clicked(move |_| {
+                                pop.popdown();
+                                if from > 0 {
+                                    if let Some(b) = buf.borrow().as_ref() {
+                                        reorder_xml_children(b, &xml, &r, from, from - 1);
+                                    }
+                                }
+                            });
+                        }
+
+                        // Move Down
+                        {
+                            let buf = buf_ref.clone();
+                            let xml = xml_rc.clone();
+                            let r = ranges.clone();
+                            let from = idx;
+                            let pop = popover.clone();
+                            let len = ranges.len();
+                            down_btn.connect_clicked(move |_| {
+                                pop.popdown();
+                                if from + 1 < len {
+                                    if let Some(b) = buf.borrow().as_ref() {
+                                        reorder_xml_children(b, &xml, &r, from, from + 1);
+                                    }
+                                }
+                            });
+                        }
+
+                        // Insert Into adjacent container
+                        {
+                            let buf = buf_ref.clone();
+                            let xml = xml_rc.clone();
+                            let r = ranges.clone();
+                            let cls = classes.clone();
+                            let from = idx;
+                            let pop = popover.clone();
+                            into_btn.connect_clicked(move |_| {
+                                pop.popdown();
+                                if let Some(b) = buf.borrow().as_ref() {
+                                    insert_into_adjacent_container(b, &xml, &r, &cls, from);
+                                }
+                            });
+                        }
+
+                        // Clean up popover when closed
+                        {
+                            let pop = popover.clone();
+                            popover.connect_closed(move |_| {
+                                pop.unparent();
+                            });
+                        }
+
+                        popover.popup();
+                    });
+                    child.add_controller(rc_gesture);
+                }
+
                 b.append(child);
             }
             b.upcast()
@@ -528,14 +668,58 @@ fn build_widget(node: roxmltree::Node, ctx: &ClickCtx) -> Option<Widget> {
             if let Some(v) = prop_val(&props, "column-spacing") {
                 if let Ok(n) = v.trim().parse::<u32>() { g.set_column_spacing(n); }
             }
+            if let Some(v) = prop_val(&props, "row-homogeneous") {
+                g.set_row_homogeneous(parse_bool(v));
+            }
+            if let Some(v) = prop_val(&props, "column-homogeneous") {
+                g.set_column_homogeneous(parse_bool(v));
+            }
             apply_common_props(&g, &props);
-            // Attach children — use <layout> properties if present, else auto-stack
-            let mut auto_row = 0i32;
-            for (_ty, child) in &children {
-                // Try to read layout col/row from the child's own node
-                // For now, auto-place in a vertical column
-                g.attach(child, 0, auto_row, 1, 1);
-                auto_row += 1;
+
+            // Collect child nodes with their <layout> properties for proper placement
+            let child_nodes: Vec<_> = node
+                .children()
+                .filter(|n| n.is_element() && n.tag_name().name() == "child")
+                .filter_map(|child_node| {
+                    let obj = child_node
+                        .children()
+                        .find(|n| n.is_element() && n.tag_name().name() == "object")?;
+                    let widget = build_widget(obj, ctx)?;
+                    // Parse <layout> properties from the child's <object>
+                    let layout = collect_layout_props(obj);
+                    Some((widget, layout))
+                })
+                .collect();
+
+            if child_nodes.is_empty() {
+                // No children — show placeholder grid based on row/column-spacing
+                // to give the user visual feedback
+                let n_rows = prop_val(&props, "n-rows")
+                    .and_then(|v| v.trim().parse::<i32>().ok())
+                    .unwrap_or(2);
+                let n_cols = prop_val(&props, "n-columns")
+                    .and_then(|v| v.trim().parse::<i32>().ok())
+                    .unwrap_or(2);
+                for r in 0..n_rows {
+                    for c in 0..n_cols {
+                        let lbl = Label::new(Some(&format!("{},{}", r, c)));
+                        lbl.add_css_class("dim-label");
+                        lbl.set_hexpand(true);
+                        lbl.set_vexpand(true);
+                        g.attach(&lbl, c, r, 1, 1);
+                    }
+                }
+            } else {
+                // Attach children using layout properties or auto-stack
+                let mut auto_row = 0i32;
+                for (child, layout) in &child_nodes {
+                    let col = layout.column.unwrap_or(0);
+                    let row = layout.row.unwrap_or(auto_row);
+                    let col_span = layout.column_span.unwrap_or(1);
+                    let row_span = layout.row_span.unwrap_or(1);
+                    g.attach(child, col, row, col_span, row_span);
+                    auto_row = row + row_span;
+                }
             }
             g.upcast()
         }
@@ -961,4 +1145,311 @@ fn build_widget(node: roxmltree::Node, ctx: &ClickCtx) -> Option<Widget> {
     attach_click_to_select(&widget, byte_offset, ctx, class, id);
 
     Some(widget)
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Layout parsing for Grid children
+// ─────────────────────────────────────────────────────────────────────
+
+/// Layout properties from a `<layout>` child of an `<object>`.
+struct LayoutProps {
+    column: Option<i32>,
+    row: Option<i32>,
+    column_span: Option<i32>,
+    row_span: Option<i32>,
+}
+
+/// Parse `<layout><property name="column">...</property>...` inside an <object>.
+fn collect_layout_props(obj_node: roxmltree::Node) -> LayoutProps {
+    let layout_node = obj_node
+        .children()
+        .find(|n| n.is_element() && n.tag_name().name() == "layout");
+
+    let mut lp = LayoutProps {
+        column: None,
+        row: None,
+        column_span: None,
+        row_span: None,
+    };
+
+    if let Some(layout) = layout_node {
+        for prop in layout
+            .children()
+            .filter(|n| n.is_element() && n.tag_name().name() == "property")
+        {
+            let name = prop.attribute("name").unwrap_or("");
+            let val = prop.text().unwrap_or("").trim();
+            match name {
+                "column" => lp.column = val.parse().ok(),
+                "row" => lp.row = val.parse().ok(),
+                "column-span" => lp.column_span = val.parse().ok(),
+                "row-span" => lp.row_span = val.parse().ok(),
+                _ => {}
+            }
+        }
+    }
+
+    lp
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Container detection helpers
+// ─────────────────────────────────────────────────────────────────────
+
+/// Check if a GTK class name is a container widget.
+fn is_container_class(class: &str) -> bool {
+    matches!(
+        class,
+        "GtkBox"
+            | "GtkGrid"
+            | "GtkFrame"
+            | "GtkScrolledWindow"
+            | "GtkPaned"
+            | "GtkNotebook"
+            | "GtkStack"
+            | "GtkOverlay"
+            | "GtkCenterBox"
+            | "GtkExpander"
+            | "GtkFlowBox"
+            | "GtkListBox"
+            | "GtkHeaderBar"
+            | "GtkActionBar"
+            | "GtkWindow"
+            | "GtkApplicationWindow"
+            | "GtkDialog"
+            | "GtkPopover"
+            | "GtkRevealer"
+            | "GtkViewport"
+    )
+}
+
+/// Collect the class names of each `<child>`'s `<object>` under a parent node.
+/// Result indices align with `collect_child_ranges`.
+fn collect_sibling_classes(node: roxmltree::Node) -> Vec<String> {
+    node.children()
+        .filter(|n| n.is_element() && n.tag_name().name() == "child")
+        .filter_map(|child_node| {
+            let obj = child_node
+                .children()
+                .find(|n| n.is_element() && n.tag_name().name() == "object")?;
+            Some(obj.attribute("class").unwrap_or("").to_string())
+        })
+        .collect()
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Drag-to-reorder helpers
+// ─────────────────────────────────────────────────────────────────────
+
+/// Collect byte ranges of all `<child>` elements under a node.
+/// Indices align with `collect_children` for typical container widgets
+/// (children that have a buildable `<object>` child).
+fn collect_child_ranges(node: roxmltree::Node) -> Vec<std::ops::Range<usize>> {
+    node.children()
+        .filter(|n| n.is_element() && n.tag_name().name() == "child")
+        .filter_map(|child_node| {
+            // Only include children that have an <object> (matching collect_children filter)
+            child_node
+                .children()
+                .find(|n| n.is_element() && n.tag_name().name() == "object")?;
+            Some(child_node.range())
+        })
+        .collect()
+}
+
+/// Reorder `<child>` blocks in the source buffer by moving the child
+/// at index `from` to index `to`.
+fn reorder_xml_children(
+    buffer: &sourceview5::Buffer,
+    xml: &str,
+    ranges: &[std::ops::Range<usize>],
+    from: usize,
+    to: usize,
+) {
+    if from == to || ranges.len() < 2 || from >= ranges.len() || to >= ranges.len() {
+        return;
+    }
+
+    // Collect child block texts in original order
+    let mut blocks: Vec<String> = ranges.iter()
+        .map(|r| xml[r.clone()].to_string())
+        .collect();
+
+    // Separator between children (whitespace/newlines from the original)
+    let separator = if ranges.len() >= 2 {
+        xml[ranges[0].end..ranges[1].start].to_string()
+    } else {
+        "\n    ".to_string()
+    };
+
+    // Move block from source to target position
+    let block = blocks.remove(from);
+    blocks.insert(to, block);
+
+    // Reconstruct the children region
+    let new_text = blocks.join(&separator);
+
+    // Replace the entire span from first child start to last child end
+    let overall_start = ranges.iter().map(|r| r.start).min().unwrap();
+    let overall_end = ranges.iter().map(|r| r.end).max().unwrap();
+
+    // Convert byte offsets to char offsets
+    let char_start = xml[..overall_start].chars().count();
+    let char_end = xml[..overall_end].chars().count();
+
+    let mut start_iter = buffer.iter_at_offset(char_start as i32);
+    let mut end_iter = buffer.iter_at_offset(char_end as i32);
+
+    buffer.begin_user_action();
+    buffer.delete(&mut start_iter, &mut end_iter);
+    buffer.insert(&mut start_iter, &new_text);
+    buffer.end_user_action();
+}
+
+/// Move the `<child>` block at index `from` inside the nearest adjacent
+/// container sibling. Prefers the sibling above; falls back to below.
+///
+/// The moved `<child>` block is appended just before the container's
+/// closing `</object>` tag, preserving indentation.
+fn insert_into_adjacent_container(
+    buffer: &sourceview5::Buffer,
+    xml: &str,
+    ranges: &[std::ops::Range<usize>],
+    classes: &[String],
+    from: usize,
+) {
+    if from >= ranges.len() || from >= classes.len() {
+        return;
+    }
+
+    // Determine which adjacent sibling is a container (prefer above)
+    let target_idx = if from > 0 && classes.get(from - 1).map_or(false, |c| is_container_class(c)) {
+        from - 1
+    } else if from + 1 < classes.len()
+        && classes.get(from + 1).map_or(false, |c| is_container_class(c))
+    {
+        from + 1
+    } else {
+        return;
+    };
+
+    // Extract the child block to move
+    let child_block = xml[ranges[from].clone()].to_string();
+
+    // Find the container's </object> closing tag.
+    // The container is inside its own <child>…</child> wrapper.
+    // We need to find the *last* </object> inside that <child> range.
+    let container_range = &ranges[target_idx];
+    let container_text = &xml[container_range.clone()];
+
+    // Find the last </object> in the container (this is the container object's close)
+    let last_close = match container_text.rfind("</object>") {
+        Some(pos) => pos,
+        None => return,
+    };
+
+    // Determine the indentation for the new child block.
+    // Look at the whitespace before </object> to get the container's indent level.
+    let before_close = &container_text[..last_close];
+    let indent = before_close
+        .rfind('\n')
+        .map(|nl| {
+            let line_start = nl + 1;
+            let spaces = &before_close[line_start..];
+            spaces
+                .chars()
+                .take_while(|c| c.is_whitespace())
+                .collect::<String>()
+        })
+        .unwrap_or_else(|| "    ".to_string());
+
+    // Re-indent the child block to match the container's depth (one level deeper)
+    let child_indent = format!("{}  ", indent);
+    let indented_child = reindent_block(&child_block, &child_indent);
+
+    // Build the new text to insert: newline + indented child block + newline + indent
+    let insertion = format!("\n{}{}\n{}", child_indent, indented_child.trim(), indent);
+
+    // Absolute byte offset of the insertion point (before the container's </object>)
+    let insert_byte = container_range.start + last_close;
+
+    // Now we need to:
+    // 1. Remove the original child block (and surrounding whitespace)
+    // 2. Insert it inside the container
+    // We must be careful about ordering: removing vs inserting changes offsets.
+
+    // Strategy: build the new full text, then replace the entire affected region.
+    let mut new_xml = String::with_capacity(xml.len() + insertion.len());
+
+    if from < target_idx {
+        // Child is above the container: remove child first, then insert
+        // Remove the child block and trailing whitespace up to next tag
+        let remove_start = ranges[from].start;
+        let remove_end = if from + 1 < ranges.len() {
+            // Eat whitespace between this child and the next
+            ranges[from + 1].start
+        } else {
+            ranges[from].end
+        };
+
+        new_xml.push_str(&xml[..remove_start]);
+        let after_remove = &xml[remove_end..];
+
+        // The insert point shifted by the removal amount
+        let shifted_insert = insert_byte - (remove_end - remove_start);
+        let remaining_before_insert = shifted_insert - remove_start;
+        new_xml.push_str(&after_remove[..remaining_before_insert]);
+        new_xml.push_str(&insertion);
+        new_xml.push_str(&after_remove[remaining_before_insert..]);
+    } else {
+        // Child is below the container: insert first, then remove
+        new_xml.push_str(&xml[..insert_byte]);
+        new_xml.push_str(&insertion);
+        new_xml.push_str(&xml[insert_byte..ranges[from].start]);
+        // Skip the child block and trailing whitespace
+        let remove_end = if from + 1 < ranges.len() {
+            ranges[from + 1].start
+        } else {
+            ranges[from].end
+        };
+        new_xml.push_str(&xml[remove_end..]);
+    }
+
+    // Replace the entire buffer
+    let (buf_start, buf_end) = buffer.bounds();
+    let mut s = buf_start;
+    let mut e = buf_end;
+
+    buffer.begin_user_action();
+    buffer.delete(&mut s, &mut e);
+    buffer.insert(&mut s, &new_xml);
+    buffer.end_user_action();
+}
+
+/// Re-indent a block of text to a given base indentation.
+fn reindent_block(block: &str, base_indent: &str) -> String {
+    let lines: Vec<&str> = block.lines().collect();
+    if lines.is_empty() {
+        return block.to_string();
+    }
+
+    // Find the minimum indentation of non-empty lines
+    let min_indent = lines
+        .iter()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| l.len() - l.trim_start().len())
+        .min()
+        .unwrap_or(0);
+
+    lines
+        .iter()
+        .map(|line| {
+            if line.trim().is_empty() {
+                String::new()
+            } else {
+                format!("{}{}", base_indent, &line[min_indent..])
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
