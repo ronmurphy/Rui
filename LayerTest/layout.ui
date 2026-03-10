@@ -1,0 +1,213 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+<object class="GtkGrid" id="main_grid">
+<property name="row-spacing">8</property>
+<property name="column-spacing">8</property>
+<property name="margin-start">12</property>
+<property name="margin-end">12</property>
+<property name="margin-top">12</property>
+<property name="margin-bottom">12</property>
+<property name="rui-rows">7</property>
+<property name="rui-columns">8</property>
+    <child>
+<object class="GtkHeaderBar" id="header_bar">
+<layout>
+<property name="column">0</property>
+<property name="row">0</property>
+<property name="column-span">8</property>
+<property name="row-span">1</property>
+</layout>
+</object>
+</child>
+    <child>
+<object class="GtkLabel" id="status_label">
+        <property name="label">Status / Footer</property>
+<property name="xalign">0</property>
+<layout>
+<property name="column">0</property>
+<property name="row">6</property>
+<property name="column-span">8</property>
+<property name="row-span">1</property>
+</layout>
+</object>
+</child>
+
+
+      <child>
+        <object class="GtkFrame">
+          <property name="label">Frame Title</property>
+          <child>
+            <!-- Frame content -->
+          </child>
+        
+          <layout>
+            <property name="column">0</property>
+            <property name="row">1</property>
+            <property name="column-span">1</property>
+            <property name="row-span">5</property>
+          </layout>          <property name="halign">center</property>
+  <child>
+    <object class="GtkBox">
+      <property name="orientation">vertical</property>
+      <property name="spacing">8</property>
+      <child>
+        <!-- Add children here -->
+      </child>
+          <child>
+        <object class="GtkSeparator">
+          <property name="orientation">horizontal</property>
+        </object>
+      </child>
+  <child>
+    <object class="GtkSpinner">
+      <property name="spinning">true</property>
+    </object>
+  </child>
+  <child>
+    <object class="GtkButton">
+      <property name="label">Click Me</property>
+    </object>
+  </child>
+  <child>
+    <object class="GtkButton">
+      <property name="label">Click Me</property>
+    </object>
+  </child>
+  <child>
+    <object class="GtkButton">
+      <property name="label">Click Me</property>
+    </object>
+  </child>
+  <child>
+    <object class="GtkToggleButton">
+      <property name="label">Toggle</property>
+    </object>
+  </child>
+  <child>
+    <object class="GtkScale">
+      <property name="orientation">horizontal</property>
+      <property name="hexpand">true</property>
+      <property name="adjustment">
+        <object class="GtkAdjustment">
+          <property name="lower">0</property>
+          <property name="upper">100</property>
+          <property name="step-increment">1</property>
+          <property name="value">50</property>
+        </object>
+      </property>
+      <property name="draw-value">true</property>
+    </object>
+  </child>
+</object>
+  </child>
+</object>
+      </child>
+
+      <child>
+        <object class="GtkTextView">
+          <property name="editable">true</property>
+          <property name="wrap-mode">word</property>
+          <property name="hexpand">false</property>
+          <property name="vexpand">false</property>
+        
+          <layout>
+            <property name="column">1</property>
+            <property name="row">1</property>
+            <property name="column-span">6</property>
+            <property name="row-span">4</property>
+          </layout>          <property name="halign">fill</property>
+<property name="valign">fill</property>
+</object>
+      </child>
+
+  <child>
+    <object class="GtkFrame">
+      <property name="label">Frame Title</property>
+      <child>
+        <!-- Frame content -->
+      </child>
+    
+      <layout>
+        <property name="column">1</property>
+        <property name="row">5</property>
+        <property name="column-span">6</property>
+        <property name="row-span">1</property>
+      </layout>        <child>
+          <object class="GtkBox">
+            <property name="orientation">horizontal</property>
+            <property name="spacing">8</property>
+            <child>
+              <!-- Add children here -->
+            </child>
+                      <child>
+              <object class="GtkButton">
+                <property name="label">Click Me</property>
+              </object>
+            </child>
+  <child>
+    <object class="GtkButton">
+      <property name="label">Click Me</property>
+    </object>
+  </child>
+  <child>
+    <object class="GtkButton">
+      <property name="label">Click Me</property>
+    </object>
+  </child>
+  <child>
+    <object class="GtkButton">
+      <property name="label">Click Me</property>
+    </object>
+  </child>
+  <child>
+    <object class="GtkButton">
+      <property name="label">Click Me</property>
+    </object>
+  </child>
+  <child>
+    <object class="GtkButton">
+      <property name="label">Click Me</property>
+    </object>
+  </child>
+</object>
+        </child>
+</object>
+  </child>
+
+  
+
+      <child>
+        <object class="GtkFrame">
+          <property name="label">Frame Title</property>
+          <child>
+            <!-- Frame content -->
+          </child>
+        
+          <layout>
+            <property name="column">7</property>
+            <property name="row">1</property>
+            <property name="column-span">1</property>
+            <property name="row-span">5</property>
+          </layout>            <child>
+              <object class="GtkBox">
+                <property name="orientation">vertical</property>
+                <property name="spacing">8</property>
+                <child>
+                  <!-- Add children here -->
+                </child>
+              </object>
+            </child>
+  <child>
+    <object class="GtkSeparator">
+      <property name="orientation">horizontal</property>
+    </object>
+  </child>
+  <child>
+    <object class="GtkSeparator">
+      <property name="orientation">horizontal</property>
+    </object>
+  </child>
+</object>
+      </child>
+</object>
+</interface>

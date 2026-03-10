@@ -119,7 +119,7 @@ fn header_content(rows: i32, cols: i32) -> String {
     c.push_str(&child(
         "GtkHeaderBar", "header_bar",
         0, 0, cols, 1,
-        "        <property name=\"title-widget\"><attribute name=\"type\">default</attribute></property>\n",
+        "",
     ));
     // Merged placeholder for content area
     if rows > 1 {
@@ -136,7 +136,7 @@ fn header_content_footer(rows: i32, cols: i32) -> String {
     c.push_str(&child(
         "GtkHeaderBar", "header_bar",
         0, 0, cols, 1,
-        "        <property name=\"title-widget\"><attribute name=\"type\">default</attribute></property>\n",
+        "",
     ));
     if content_rows > 0 {
         c.push_str(&merged(0, 1, cols, content_rows));
@@ -163,7 +163,7 @@ fn text_editor(rows: i32, cols: i32) -> String {
     c.push_str(&child(
         "GtkHeaderBar", "header_bar",
         0, 0, cols, 1,
-        "        <property name=\"title-widget\"><attribute name=\"type\">default</attribute></property>\n",
+        "",
     ));
     // Sidebar panel
     if content_rows > 0 {
@@ -196,7 +196,7 @@ fn two_panel(rows: i32, cols: i32) -> String {
     c.push_str(&child(
         "GtkHeaderBar", "header_bar",
         0, 0, cols, 1,
-        "        <property name=\"title-widget\"><attribute name=\"type\">default</attribute></property>\n",
+        "",
     ));
     if content_rows > 0 {
         c.push_str(&child(
@@ -231,7 +231,7 @@ fn dashboard(rows: i32, cols: i32) -> String {
     c.push_str(&child(
         "GtkHeaderBar", "header_bar",
         0, 0, cols, 1,
-        "        <property name=\"title-widget\"><attribute name=\"type\">default</attribute></property>\n",
+        "",
     ));
 
     let tiles = [

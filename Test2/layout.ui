@@ -1,64 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <interface>
-  <object class="GtkBox" id="main_box">
-    <property name="orientation">vertical</property>
-    <property name="spacing">8</property>
+  <object class="GtkGrid" id="main_grid">
+    <property name="row-spacing">8</property>
+    <property name="column-spacing">8</property>
     <property name="margin-start">12</property>
     <property name="margin-end">12</property>
     <property name="margin-top">12</property>
     <property name="margin-bottom">12</property>
-    <child>
-      <object class="GtkLabel" id="hello_label">
-        <property name="label">Hello, World!</property>
-      </object>
-    </child>
-    <child>
-      <object class="GtkGrid">
-        <property name="row-spacing">8</property>
-        <property name="column-spacing">8</property>
-        <child>
-          <object class="GtkLabel">
-            <property name="label">Name Here</property>
-            <layout>
-              <property name="column">1</property>
-              <property name="row">0</property>
-              <property name="column-span">1</property>
-              <property name="row-span">1</property>
-            </layout>
-          </object>
-        </child>
-
-  <child>
-        <object class="GtkButton" id="click_me">
-          <property name="label">Click Me</property>
-        
-          <layout>
-            <property name="column">1</property>
-            <property name="row">1</property>
-            <property name="column-span">1</property>
-            <property name="row-span">1</property>
-          </layout></object>
-      </child>
-</object>
-    </child>
-  <child>
-    <object class="GtkFrame">
-      <property name="label">Frame Title</property>
-      <child>
-        <!-- Frame content -->
-      </child>
-          <child>
-        <object class="GtkSpinner">
-          <property name="spinning">true</property>
-        </object>
-      </child>
-  <child>
-    <object class="GtkProgressBar">
-      <property name="fraction">0.5</property>
-      <property name="show-text">true</property>
-    </object>
-  </child>
-</object>
-  </child>
-</object>
+    <property name="rui-rows">7</property>
+    <property name="rui-columns">8</property>
+  </object>
 </interface>

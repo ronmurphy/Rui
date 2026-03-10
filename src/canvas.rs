@@ -45,6 +45,8 @@ struct ClickCtx {
     merge_checked: Rc<RefCell<std::collections::HashSet<(i32, i32)>>>,
     /// The Apply Merge button — updated for sensitivity as cells are checked.
     apply_btn: Button,
+    /// The <child> byte range of the currently selected widget (for Del key).
+    selected_child_range: Rc<RefCell<Option<std::ops::Range<usize>>>>,
 }
 
 /// The live preview panel shown beside the editor.
@@ -74,6 +76,8 @@ pub struct Canvas {
     merge_btn: ToggleButton,
     /// The apply button (stored to update sensitivity and reset state).
     apply_btn: Button,
+    /// Byte range of the currently-selected widget's <child> block.
+    selected_child_range: Rc<RefCell<Option<std::ops::Range<usize>>>>,
 }
 
 impl Canvas {
@@ -139,6 +143,7 @@ impl Canvas {
             merge_btn,
             apply_btn,
             on_xml_error: Rc::new(RefCell::new(None)),
+            selected_child_range: Rc::new(RefCell::new(None)),
         }
     }
 
@@ -210,6 +215,7 @@ impl Canvas {
             merge_mode: self.merge_mode.clone(),
             merge_checked: self.merge_checked.clone(),
             apply_btn: self.apply_btn.clone(),
+            selected_child_range: self.selected_child_range.clone(),
         };
 
         // Find all top-level <object> nodes (may be wrapped in <interface>)
@@ -306,6 +312,20 @@ impl Canvas {
                 },
             );
         });
+    }
+
+    /// Delete the currently selected widget (the one with canvas-selected CSS class).
+    /// No-op if nothing is selected or the selection has no <child> wrapper.
+    pub fn delete_selected(&self) {
+        let range = self.selected_child_range.borrow().clone();
+        if let Some(range) = range {
+            if let Some(buffer) = self.source_buffer.borrow().as_ref() {
+                let (s, e) = buffer.bounds();
+                let xml = buffer.text(&s, &e, false).to_string();
+                delete_child_range(buffer, &xml, &range);
+            }
+            *self.selected_child_range.borrow_mut() = None;
+        }
     }
 
     /// Re-render from the currently stored buffer (no-op if no buffer is set).
@@ -546,7 +566,7 @@ fn collect_combobox_items(node: roxmltree::Node) -> Vec<String> {
 /// the `<object>` tag's position in the source XML when clicked.
 /// For GtkExpander, also toggles expanded state since we claim the click.
 /// On double-click, fires the codegen callback for interactive widgets.
-fn attach_click_to_select(widget: &Widget, byte_offset: usize, ctx: &ClickCtx, class: &str, id: &str) {
+fn attach_click_to_select(widget: &Widget, byte_offset: usize, ctx: &ClickCtx, class: &str, id: &str, child_range: Option<std::ops::Range<usize>>) {
     let gesture = GestureClick::new();
     gesture.set_button(1); // left click
     // Use BUBBLE phase so DragSource (which uses CAPTURE internally) gets first chance
@@ -557,6 +577,7 @@ fn attach_click_to_select(widget: &Widget, byte_offset: usize, ctx: &ClickCtx, c
     let is_expander = class == "GtkExpander";
     let widget_ref = widget.clone();
     let selected_ref = ctx.selected_widget.clone();
+    let selected_child_ref = ctx.selected_child_range.clone();
     let dbl_click_cb = ctx.on_double_click.clone();
     let class_owned = class.to_string();
     let id_owned = id.to_string();
@@ -576,6 +597,7 @@ fn attach_click_to_select(widget: &Widget, byte_offset: usize, ctx: &ClickCtx, c
         }
         widget_ref.add_css_class("canvas-selected");
         *selected_ref.borrow_mut() = Some(widget_ref.clone());
+        *selected_child_ref.borrow_mut() = child_range.clone();
 
         // For Expander: toggle expand/collapse
         if is_expander {
@@ -872,7 +894,7 @@ fn build_widget(node: roxmltree::Node, ctx: &ClickCtx) -> Option<Widget> {
                         let child_block = &xml_str[child_range.clone()];
                         if let Some(rel) = child_block.find("<object") {
                             let byte_offset = child_range.start + rel + 7;
-                            attach_click_to_select(&f.clone().upcast::<Widget>(), byte_offset, ctx, "", "");
+                            attach_click_to_select(&f.clone().upcast::<Widget>(), byte_offset, ctx, "", "", None);
                         }
                         (f.upcast::<Widget>(), span_lbl.upcast::<Widget>())
                     } else {
@@ -1117,7 +1139,7 @@ fn build_widget(node: roxmltree::Node, ctx: &ClickCtx) -> Option<Widget> {
                             // Click-to-select: move cursor inside the GtkGrid
                             // so palette inserts land in this grid, not outside.
                             let grid_byte_offset = node.range().start + 7;
-                            attach_click_to_select(&ph.clone().upcast::<Widget>(), grid_byte_offset, ctx, "GtkGrid", "");
+                            attach_click_to_select(&ph.clone().upcast::<Widget>(), grid_byte_offset, ctx, "GtkGrid", "", None);
 
                             if ctx.merge_mode.get() {
                                 // Merge mode: overlay a CheckButton on the cell
@@ -1573,7 +1595,10 @@ fn build_widget(node: roxmltree::Node, ctx: &ClickCtx) -> Option<Widget> {
     // the inspector's rfind("<object") then finds THIS node, not the parent.
     let byte_offset = node.range().start + 7;
     let id = node.attribute("id").unwrap_or("");
-    attach_click_to_select(&widget, byte_offset, ctx, class, id);
+    let child_range = node.parent()
+        .filter(|p| p.is_element() && p.tag_name().name() == "child")
+        .map(|p| p.range());
+    attach_click_to_select(&widget, byte_offset, ctx, class, id, child_range);
 
     // Drag source — only for objects that are a direct <child> of a container.
     // Payload: "{child_start}:{child_end}" byte range of the <child> block.

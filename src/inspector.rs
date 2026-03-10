@@ -7,7 +7,8 @@
 
 use gtk4::prelude::*;
 use gtk4::{
-    Box as GtkBox, Entry, Label, Orientation, ScrolledWindow, Separator,
+    Box as GtkBox, CheckButton, DropDown, Entry, Grid, Label, Orientation,
+    ScrolledWindow, Separator, StringList,
 };
 use sourceview5::prelude::*;
 use std::cell::{Cell, RefCell};
@@ -140,23 +141,135 @@ impl Inspector {
         };
         self.header_label.set_text(&title);
 
-        // Class label
         let class_row = make_label_row("class", &info.class);
         self.content.append(&class_row);
-
         if let Some(id) = &info.id {
-            let id_row = make_label_row("id", id);
-            self.content.append(&id_row);
+            self.content.append(&make_label_row("id", id));
         }
 
-        let sep = Separator::new(Orientation::Horizontal);
-        sep.set_margin_top(4);
-        sep.set_margin_bottom(4);
-        self.content.append(&sep);
+        // ── Alignment / expand section ────────────────────────────────
+        let sep1 = Separator::new(Orientation::Horizontal);
+        sep1.set_margin_top(4);
+        sep1.set_margin_bottom(2);
+        self.content.append(&sep1);
 
-        // Editable property rows
+        let align_heading = Label::new(Some("Alignment & Expand"));
+        align_heading.set_halign(gtk4::Align::Start);
+        align_heading.set_margin_start(4);
+        align_heading.set_margin_bottom(2);
+        align_heading.add_css_class("dim-label");
+        self.content.append(&align_heading);
+
+        // Read current values (default: fill / false)
+        let get_prop = |name: &str| -> String {
+            info.properties.iter()
+                .find(|(n, ..)| n == name)
+                .map(|(_, v, ..)| v.trim().to_string())
+                .unwrap_or_default()
+        };
+        let cur_halign  = get_prop("halign");
+        let cur_valign  = get_prop("valign");
+        let cur_hexpand = get_prop("hexpand");
+        let cur_vexpand = get_prop("vexpand");
+
+        const ALIGN_OPTS: &[&str] = &["fill", "start", "center", "end", "baseline"];
+        let align_index = |v: &str| -> u32 {
+            ALIGN_OPTS.iter().position(|&s| s == v).unwrap_or(0) as u32
+        };
+
+        // Grid: col 0 = label, col 1 = dropdown, col 2 = expand checkbox
+        let grid = Grid::new();
+        grid.set_column_spacing(4);
+        grid.set_row_spacing(4);
+        grid.set_margin_start(4);
+        grid.set_margin_end(4);
+        grid.set_margin_bottom(4);
+
+        // H-align row
+        let lbl_h = Label::new(Some("H-align"));
+        lbl_h.set_halign(gtk4::Align::Start);
+        lbl_h.add_css_class("dim-label");
+
+        let halign_dd = DropDown::new(
+            Some(StringList::new(ALIGN_OPTS)),
+            gtk4::Expression::NONE,
+        );
+        halign_dd.set_selected(align_index(cur_halign.trim()));
+        halign_dd.set_hexpand(true);
+        {
+            let buf = buffer.clone();
+            let writing = self.writing.clone();
+            halign_dd.connect_selected_notify(move |dd| {
+                let val = ALIGN_OPTS[dd.selected() as usize];
+                add_or_write_property(&buf, "halign", val, &writing);
+            });
+        }
+
+        let hexpand_cb = CheckButton::with_label("hexpand");
+        hexpand_cb.set_active(cur_hexpand.trim() == "true");
+        {
+            let buf = buffer.clone();
+            let writing = self.writing.clone();
+            hexpand_cb.connect_toggled(move |cb| {
+                let val = if cb.is_active() { "true" } else { "false" };
+                add_or_write_property(&buf, "hexpand", val, &writing);
+            });
+        }
+
+        grid.attach(&lbl_h,     0, 0, 1, 1);
+        grid.attach(&halign_dd, 1, 0, 1, 1);
+        grid.attach(&hexpand_cb,2, 0, 1, 1);
+
+        // V-align row
+        let lbl_v = Label::new(Some("V-align"));
+        lbl_v.set_halign(gtk4::Align::Start);
+        lbl_v.add_css_class("dim-label");
+
+        let valign_dd = DropDown::new(
+            Some(StringList::new(ALIGN_OPTS)),
+            gtk4::Expression::NONE,
+        );
+        valign_dd.set_selected(align_index(cur_valign.trim()));
+        valign_dd.set_hexpand(true);
+        {
+            let buf = buffer.clone();
+            let writing = self.writing.clone();
+            valign_dd.connect_selected_notify(move |dd| {
+                let val = ALIGN_OPTS[dd.selected() as usize];
+                add_or_write_property(&buf, "valign", val, &writing);
+            });
+        }
+
+        let vexpand_cb = CheckButton::with_label("vexpand");
+        vexpand_cb.set_active(cur_vexpand.trim() == "true");
+        {
+            let buf = buffer.clone();
+            let writing = self.writing.clone();
+            vexpand_cb.connect_toggled(move |cb| {
+                let val = if cb.is_active() { "true" } else { "false" };
+                add_or_write_property(&buf, "vexpand", val, &writing);
+            });
+        }
+
+        grid.attach(&lbl_v,     0, 1, 1, 1);
+        grid.attach(&valign_dd, 1, 1, 1, 1);
+        grid.attach(&vexpand_cb,2, 1, 1, 1);
+
+        self.content.append(&grid);
+
+        // ── Editable property rows (skip the 4 above) ────────────────
+        let sep2 = Separator::new(Orientation::Horizontal);
+        sep2.set_margin_top(2);
+        sep2.set_margin_bottom(4);
+        self.content.append(&sep2);
+
         let mut entries = self.entries.borrow_mut();
         for (name, value, _val_start, _val_end) in &info.properties {
+            // Already shown as special controls above
+            if matches!(name.as_str(), "halign" | "valign" | "hexpand" | "vexpand") {
+                continue;
+            }
+
             let row = GtkBox::new(Orientation::Vertical, 1);
             row.set_margin_top(2);
             row.set_margin_bottom(2);
@@ -174,7 +287,6 @@ impl Inspector {
             row.append(&entry);
             self.content.append(&row);
 
-            // When the user presses Enter, write back to XML
             {
                 let buf = buffer.clone();
                 let prop_name = name.clone();
@@ -184,8 +296,6 @@ impl Inspector {
                     write_property_by_name(&buf, &prop_name, &entry_clone.text(), &writing);
                 });
             }
-
-            // Also write back when focus leaves the entry
             {
                 let buf2 = buffer.clone();
                 let prop_name2 = name.clone();
@@ -194,7 +304,6 @@ impl Inspector {
                 let writing = self.writing.clone();
                 let focus = gtk4::EventControllerFocus::new();
                 focus.connect_leave(move |_| {
-                    // Don't write back if we're clearing the panel (entries being removed)
                     if !clearing.get() && !writing.get() {
                         write_property_by_name(&buf2, &prop_name2, &entry2.text(), &writing);
                     }
@@ -314,6 +423,92 @@ fn extract_attr(tag: &str, attr: &str) -> Option<String> {
     let start = tag.find(&pattern)? + pattern.len();
     let end = tag[start..].find('"')? + start;
     Some(tag[start..end].to_string())
+}
+
+/// Add a new property or update an existing one, using the cursor position
+/// to find the enclosing `<object>` block.
+/// If the property already exists, its value is replaced in-place.
+/// If it doesn't exist, a new `<property>` line is inserted before `</object>`.
+fn add_or_write_property(
+    buffer: &sourceview5::Buffer,
+    prop_name: &str,
+    new_value: &str,
+    writing: &Rc<Cell<bool>>,
+) {
+    if writing.get() { return; }
+    writing.set(true);
+
+    let (buf_start, buf_end) = buffer.bounds();
+    let full_text = buffer.text(&buf_start, &buf_end, false).to_string();
+
+    let cursor = buffer.iter_at_mark(&buffer.get_insert());
+    let cursor_char = cursor.offset() as usize;
+    let cursor_byte = full_text.char_indices().nth(cursor_char)
+        .map(|(i, _)| i).unwrap_or(full_text.len());
+    let safe_cursor = snap_to_char_boundary(&full_text, cursor_byte);
+
+    let obj_start = match full_text[..safe_cursor].rfind("<object") {
+        Some(s) => s,
+        None => { writing.set(false); return; }
+    };
+    let obj_rest = &full_text[obj_start..];
+    let obj_end = match find_closing_object(obj_rest) {
+        Some(e) => e,
+        None => { writing.set(false); return; }
+    };
+    let block = &full_text[obj_start..obj_start + obj_end];
+
+    let search_pattern = format!("<property name=\"{}\">", prop_name);
+    if let Some(prop_offset) = block.find(&search_pattern) {
+        // Property exists — update value in place
+        let val_start = obj_start + prop_offset + search_pattern.len();
+        let remaining = &full_text[val_start..obj_start + obj_end];
+        let val_len = match remaining.find("</property>") {
+            Some(l) => l,
+            None => { writing.set(false); return; }
+        };
+        let val_end = val_start + val_len;
+        if &full_text[val_start..val_end] == new_value {
+            writing.set(false); return;
+        }
+        let cs = full_text[..val_start].chars().count();
+        let ce = full_text[..val_end].chars().count();
+        let mut si = buffer.iter_at_offset(cs as i32);
+        let mut ei = buffer.iter_at_offset(ce as i32);
+        buffer.begin_user_action();
+        buffer.delete(&mut si, &mut ei);
+        buffer.insert(&mut si, new_value);
+        buffer.end_user_action();
+    } else {
+        // Property absent — insert before the closing </object> of this block.
+        // Use rfind so we get the OUTER closing tag, not a nested one.
+        let close_rel = match block.rfind("</object>") {
+            Some(p) => p,
+            None => { writing.set(false); return; }
+        };
+        let insert_byte = obj_start + close_rel;
+
+        // Mirror the indentation of the closing tag
+        let indent = full_text[..insert_byte]
+            .rfind('\n')
+            .map(|i| {
+                let line_start = &full_text[i + 1..insert_byte];
+                line_start.chars().take_while(|c| c.is_whitespace())
+                    .collect::<String>()
+            })
+            .unwrap_or_default();
+
+        let new_prop = format!(
+            "{indent}<property name=\"{prop_name}\">{new_value}</property>\n"
+        );
+        let char_insert = full_text[..insert_byte].chars().count();
+        let mut iter = buffer.iter_at_offset(char_insert as i32);
+        buffer.begin_user_action();
+        buffer.insert(&mut iter, &new_prop);
+        buffer.end_user_action();
+    }
+
+    writing.set(false);
 }
 
 /// Write an edited property value back into the buffer, looking up the

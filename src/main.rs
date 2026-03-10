@@ -28,6 +28,7 @@ mod inspector;
 mod toolbox;
 mod templates;
 mod history;
+mod mru;
 
 #[cfg(feature = "preview")]
 mod preview;

@@ -2,7 +2,11 @@ use gtk4::prelude::*;
 use gtk4::gio::{Menu, MenuItem, SimpleAction};
 use gtk4::Application;
 
-pub fn build(app: &Application) -> gtk4::PopoverMenuBar {
+/// Build the menubar.  Returns the widget plus two dynamic menus that the
+/// caller fills with MRU entries:
+///   1. `recent_files_menu`   — populated by `rebuild_mru_menus`
+///   2. `recent_projects_menu` — populated by `rebuild_mru_menus`
+pub fn build(app: &Application) -> (gtk4::PopoverMenuBar, Menu, Menu) {
     let menubar_model = Menu::new();
 
     // ── File ─────────────────────────────────────────────────────
@@ -12,6 +16,16 @@ pub fn build(app: &Application) -> gtk4::PopoverMenuBar {
     file_menu.append(Some("New Project…"),  Some("app.new-project"));
     file_menu.append(Some("Open…"),         Some("app.open"));
     file_menu.append(Some("Open Project…"), Some("app.open-project"));
+
+    // Recent files / projects sub-menus (populated at runtime by app.rs)
+    let recent_files_menu = Menu::new();
+    recent_files_menu.append(Some("(no recent files)"), None);
+    file_menu.append_submenu(Some("Recent Files"), &recent_files_menu);
+
+    let recent_projects_menu = Menu::new();
+    recent_projects_menu.append(Some("(no recent projects)"), None);
+    file_menu.append_submenu(Some("Recent Projects"), &recent_projects_menu);
+
     file_menu.append(Some("Save"),           Some("app.save"));
     file_menu.append(Some("Save All"),       Some("app.save-all"));
     file_menu.append(Some("Save As…"),      Some("app.save-as"));
@@ -105,7 +119,7 @@ pub fn build(app: &Application) -> gtk4::PopoverMenuBar {
         app.add_action(&action);
     }
 
-    gtk4::PopoverMenuBar::from_model(Some(&menubar_model))
+    (gtk4::PopoverMenuBar::from_model(Some(&menubar_model)), recent_files_menu, recent_projects_menu)
 }
 
 pub fn connect_action<F>(app: &Application, name: &str, cb: F)

@@ -52,6 +52,12 @@ struct AppState {
     /// True while an undo/redo operation is applying XML to the buffer,
     /// so the buffer-changed hook skips taking a new snapshot.
     history_applying: Rc<Cell<bool>>,
+    /// Most-recently-used file/project list (persisted to mru.json).
+    mru: crate::mru::Mru,
+    /// Dynamic gio::Menu backing the File → Recent Files submenu.
+    recent_files_menu: gtk4::gio::Menu,
+    /// Dynamic gio::Menu backing the File → Recent Projects submenu.
+    recent_projects_menu: gtk4::gio::Menu,
 
     #[cfg(feature = "preview")]
     preview: PreviewPane,
@@ -211,6 +217,76 @@ fn show_layout_dialog(
     dialog.present();
 }
 
+/// If `tab` holds a .ui file, parse the XML and report errors to the output panel.
+/// Called after every save so broken XML is caught immediately.
+fn validate_ui_tab(tab: &crate::tab::EditorTab, output: &crate::output::OutputPanel) {
+    let path = match tab.path() {
+        Some(p) if Canvas::is_ui_file(&p) => p,
+        _ => return,
+    };
+    let (start, end) = tab.buffer().bounds();
+    let text = tab.buffer().text(&start, &end, false).to_string();
+    match roxmltree::Document::parse(&text) {
+        Ok(_) => {} // valid — no noise
+        Err(e) => {
+            output.append_run_error(&format!(
+                "⚠ XML error in {}: {}",
+                path.file_name().unwrap_or_default().to_string_lossy(),
+                e
+            ));
+            output.show_panel();
+        }
+    }
+}
+
+/// Short display label for a path: "parentdir/filename".
+fn path_display_label(path: &std::path::Path) -> String {
+    let name = path.file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+    if let Some(parent) = path.parent().and_then(|p| p.file_name()) {
+        return format!("{}/{}", parent.to_string_lossy(), name);
+    }
+    name
+}
+
+/// Rebuild both MRU sub-menus from the current `Mru` state.
+fn rebuild_mru_menus(
+    mru: &crate::mru::Mru,
+    files_menu: &gtk4::gio::Menu,
+    projects_menu: &gtk4::gio::Menu,
+) {
+    use gtk4::glib::prelude::ToVariant;
+
+    files_menu.remove_all();
+    for path in &mru.files {
+        let label = path_display_label(path);
+        let item = gtk4::gio::MenuItem::new(Some(&label), None);
+        item.set_action_and_target_value(
+            Some("app.open-recent-file"),
+            Some(&path.to_string_lossy().to_string().to_variant()),
+        );
+        files_menu.append_item(&item);
+    }
+    if mru.files.is_empty() {
+        files_menu.append(Some("(no recent files)"), None);
+    }
+
+    projects_menu.remove_all();
+    for path in &mru.projects {
+        let label = path_display_label(path);
+        let item = gtk4::gio::MenuItem::new(Some(&label), None);
+        item.set_action_and_target_value(
+            Some("app.open-recent-project"),
+            Some(&path.to_string_lossy().to_string().to_variant()),
+        );
+        projects_menu.append_item(&item);
+    }
+    if mru.projects.is_empty() {
+        projects_menu.append(Some("(no recent projects)"), None);
+    }
+}
+
 pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
     let cfg = crate::config::load();
 
@@ -242,7 +318,7 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         .default_height(800)
         .build();
 
-    let menubar_widget = menubar::build(app);
+    let (menubar_widget, recent_files_menu, recent_projects_menu) = menubar::build(app);
 
     let minimap = Map::new();
     minimap.set_size_request(100, -1);
@@ -358,6 +434,9 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         project_dir: None,
         history: Rc::new(RefCell::new(crate::history::DesignerHistory::new())),
         history_applying: Rc::new(Cell::new(false)),
+        mru: crate::mru::Mru::load(),
+        recent_files_menu: recent_files_menu.clone(),
+        recent_projects_menu: recent_projects_menu.clone(),
         main_paned: main_paned.clone(),
         vert_paned: vert_paned.clone(),
         left_nb:   left_nb.clone(),
@@ -368,6 +447,12 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         #[cfg(feature = "preview")]
         ai_sidebar: ai_sidebar.clone(),
     }));
+
+    // Populate MRU menus from saved state.
+    {
+        let s = state.borrow();
+        rebuild_mru_menus(&s.mru, &s.recent_files_menu, &s.recent_projects_menu);
+    }
 
     // ── Connect notebook tab-switch → statusbar + minimap + canvas ──
     // Wire clickable error locations in the output panel
@@ -419,8 +504,11 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
                     let (start, end) = tab.buffer().bounds();
                     let text = tab.buffer().text(&start, &end, false).to_string();
                     s.canvas.render(&text);
-                    // Reset history and attach snapshot hook for this buffer
+                    // Reset history, snapshot the initial state, then attach
+                    // the debounced hook.  The initial push means there is
+                    // always a "pristine" baseline to undo all the way back to.
                     s.history.borrow_mut().reset();
+                    s.history.borrow_mut().push(&text);
                     {
                         let hist = s.history.clone();
                         let applying = s.history_applying.clone();
@@ -664,24 +752,32 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
             dialog.open(Some(&win), gtk4::gio::Cancellable::NONE, move |result: Result<gtk4::gio::File, gtk4::glib::Error>| {
                 if let Ok(file) = result {
                     if let Some(path) = file.path() {
-                        let s = st2.borrow();
-                        s.notebook.open_file(&path, &s.cfg);
-                        // Always update toolbox buffer for the new tab
-                        if let Some(tab) = s.notebook.current_tab() {
-                            s.toolbox.set_buffer(&tab.buffer());
-                        }
-                        // Activate canvas + toolbox + outline if this is a .ui file
-                        if Canvas::is_ui_file(&path) {
+                        {
+                            let s = st2.borrow();
+                            s.notebook.open_file(&path, &s.cfg);
+                            // Always update toolbox buffer for the new tab
                             if let Some(tab) = s.notebook.current_tab() {
-                                s.canvas.connect_buffer(&tab.buffer());
-                                s.toolbox.connect_buffer(&tab.buffer());
-                                s.outline.connect_buffer(&tab.buffer());
-                                let (start, end) = tab.buffer().bounds();
-                                let text = tab.buffer().text(&start, &end, false).to_string();
-                                s.canvas.render(&text);
-                                s.center_nb.set_current_page(Some(0));
-                                s.left_nb.set_current_page(Some(1));
+                                s.toolbox.set_buffer(&tab.buffer());
                             }
+                            // Activate canvas + toolbox + outline if this is a .ui file
+                            if Canvas::is_ui_file(&path) {
+                                if let Some(tab) = s.notebook.current_tab() {
+                                    s.canvas.connect_buffer(&tab.buffer());
+                                    s.toolbox.connect_buffer(&tab.buffer());
+                                    s.outline.connect_buffer(&tab.buffer());
+                                    let (start, end) = tab.buffer().bounds();
+                                    let text = tab.buffer().text(&start, &end, false).to_string();
+                                    s.canvas.render(&text);
+                                    s.center_nb.set_current_page(Some(0));
+                                    s.left_nb.set_current_page(Some(1));
+                                }
+                            }
+                        }
+                        // Track in MRU
+                        { st2.borrow_mut().mru.add_file(path.clone()); }
+                        {
+                            let s = st2.borrow();
+                            rebuild_mru_menus(&s.mru, &s.recent_files_menu, &s.recent_projects_menu);
                         }
                     }
                 }
@@ -705,35 +801,129 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
                         // Remember project directory for Run/Build
                         st2.borrow_mut().project_dir = Some(dir.clone());
 
-                        let s = st2.borrow();
-                        s.sidebar.set_root(&dir);
+                        {
+                            let s = st2.borrow();
+                            s.sidebar.set_root(&dir);
 
-                        // Auto-open layout.ui if it exists
-                        let ui_path = dir.join("layout.ui");
-                        if ui_path.exists() {
-                            s.notebook.open_file(&ui_path, &s.cfg);
-                            if let Some(tab) = s.notebook.current_tab() {
-                                s.toolbox.set_buffer(&tab.buffer());
-                                s.canvas.connect_buffer(&tab.buffer());
-                                s.toolbox.connect_buffer(&tab.buffer());
-                                s.outline.connect_buffer(&tab.buffer());
-                                let (start, end) = tab.buffer().bounds();
-                                let text = tab.buffer().text(&start, &end, false).to_string();
-                                s.canvas.render(&text);
-                                s.center_nb.set_current_page(Some(0));
-                                s.left_nb.set_current_page(Some(1));
+                            // Auto-open layout.ui if it exists
+                            let ui_path = dir.join("layout.ui");
+                            if ui_path.exists() {
+                                s.notebook.open_file(&ui_path, &s.cfg);
+                                if let Some(tab) = s.notebook.current_tab() {
+                                    s.toolbox.set_buffer(&tab.buffer());
+                                    s.canvas.connect_buffer(&tab.buffer());
+                                    s.toolbox.connect_buffer(&tab.buffer());
+                                    s.outline.connect_buffer(&tab.buffer());
+                                    let (start, end) = tab.buffer().bounds();
+                                    let text = tab.buffer().text(&start, &end, false).to_string();
+                                    s.canvas.render(&text);
+                                    s.center_nb.set_current_page(Some(0));
+                                    s.left_nb.set_current_page(Some(1));
+                                }
                             }
-                        }
 
-                        s.output.append_run_line(&format!(
-                            "✓ Opened project → {}",
-                            dir.display()
-                        ));
-                        s.output.show_panel();
+                            s.output.append_run_line(&format!(
+                                "✓ Opened project → {}",
+                                dir.display()
+                            ));
+                            s.output.show_panel();
+                        }
+                        // Track in MRU
+                        { st2.borrow_mut().mru.add_project(dir.clone()); }
+                        {
+                            let s = st2.borrow();
+                            rebuild_mru_menus(&s.mru, &s.recent_files_menu, &s.recent_projects_menu);
+                        }
                     }
                 }
             });
         });
+    }
+
+    // File → Open Recent File (parameterized action with path as string variant)
+    {
+        let st = state.clone();
+        let action = gtk4::gio::SimpleAction::new(
+            "open-recent-file",
+            Some(gtk4::glib::VariantTy::STRING),
+        );
+        action.connect_activate(move |_, param| {
+            if let Some(path_str) = param.and_then(|v| v.get::<String>()) {
+                let path = PathBuf::from(&path_str);
+                {
+                    let s = st.borrow();
+                    s.notebook.open_file(&path, &s.cfg);
+                    if let Some(tab) = s.notebook.current_tab() {
+                        s.toolbox.set_buffer(&tab.buffer());
+                    }
+                    if Canvas::is_ui_file(&path) {
+                        if let Some(tab) = s.notebook.current_tab() {
+                            s.canvas.connect_buffer(&tab.buffer());
+                            s.toolbox.connect_buffer(&tab.buffer());
+                            s.outline.connect_buffer(&tab.buffer());
+                            let (start, end) = tab.buffer().bounds();
+                            let text = tab.buffer().text(&start, &end, false).to_string();
+                            s.canvas.render(&text);
+                            s.center_nb.set_current_page(Some(0));
+                            s.left_nb.set_current_page(Some(1));
+                        }
+                    }
+                }
+                // Promote to front of MRU
+                { st.borrow_mut().mru.add_file(path); }
+                {
+                    let s = st.borrow();
+                    rebuild_mru_menus(&s.mru, &s.recent_files_menu, &s.recent_projects_menu);
+                }
+            }
+        });
+        app.add_action(&action);
+    }
+
+    // File → Open Recent Project (parameterized action with path as string variant)
+    {
+        let st = state.clone();
+        let action = gtk4::gio::SimpleAction::new(
+            "open-recent-project",
+            Some(gtk4::glib::VariantTy::STRING),
+        );
+        action.connect_activate(move |_, param| {
+            if let Some(path_str) = param.and_then(|v| v.get::<String>()) {
+                let dir = PathBuf::from(&path_str);
+                if !dir.is_dir() { return; }
+
+                st.borrow_mut().project_dir = Some(dir.clone());
+                {
+                    let s = st.borrow();
+                    s.sidebar.set_root(&dir);
+
+                    let ui_path = dir.join("layout.ui");
+                    if ui_path.exists() {
+                        s.notebook.open_file(&ui_path, &s.cfg);
+                        if let Some(tab) = s.notebook.current_tab() {
+                            s.toolbox.set_buffer(&tab.buffer());
+                            s.canvas.connect_buffer(&tab.buffer());
+                            s.toolbox.connect_buffer(&tab.buffer());
+                            s.outline.connect_buffer(&tab.buffer());
+                            let (start, end) = tab.buffer().bounds();
+                            let text = tab.buffer().text(&start, &end, false).to_string();
+                            s.canvas.render(&text);
+                            s.center_nb.set_current_page(Some(0));
+                            s.left_nb.set_current_page(Some(1));
+                        }
+                    }
+                    s.output.append_run_line(&format!("✓ Opened project → {}", dir.display()));
+                    s.output.show_panel();
+                }
+                // Promote to front of MRU
+                { st.borrow_mut().mru.add_project(dir); }
+                {
+                    let s = st.borrow();
+                    rebuild_mru_menus(&s.mru, &s.recent_files_menu, &s.recent_projects_menu);
+                }
+            }
+        });
+        app.add_action(&action);
     }
 
     // File → Save
@@ -744,6 +934,7 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
             if let Some(tab) = s.notebook.current_tab() {
                 if tab.path().is_some() {
                     let _ = s.notebook.save_current();
+                    validate_ui_tab(&tab, &s.output);
                 } else {
                     drop(s);
                     let _ = gtk4::prelude::WidgetExt::activate_action(
@@ -764,7 +955,10 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
             for tab in s.notebook.all_tabs() {
                 if tab.path().is_some() && tab.is_modified() {
                     match tab.save() {
-                        Ok(()) => saved += 1,
+                        Ok(()) => {
+                            saved += 1;
+                            validate_ui_tab(&tab, &s.output);
+                        }
                         Err(e) => {
                             log::error!("Save All: {}", e);
                             failed += 1;
@@ -1451,6 +1645,12 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
                     }
                     s.history_applying.set(false);
                 }
+                return gtk4::glib::Propagation::Stop;
+            }
+
+            if !ctrl && !shift && key == Key::Delete {
+                // Delete selected widget
+                st.borrow().canvas.delete_selected();
                 return gtk4::glib::Propagation::Stop;
             }
 
