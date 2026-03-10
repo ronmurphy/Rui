@@ -1,6 +1,7 @@
 use sourceview5::{prelude::*, Map};
 use gtk4::{
-    Application, ApplicationWindow, Box as GtkBox, FileDialog, Orientation, Paned,
+    Application, ApplicationWindow, Box as GtkBox, FileDialog, Label,
+    Notebook as GtkNotebook, Orientation, Paned,
 };
 use crate::config::EditorConfig;
 use std::cell::RefCell;
@@ -13,6 +14,7 @@ use crate::goto;
 use crate::help;
 use crate::menubar;
 use crate::canvas::Canvas;
+use crate::outline::OutlinePanel;
 use crate::toolbox::Toolbox;
 
 #[cfg(feature = "preview")]
@@ -38,6 +40,7 @@ struct AppState {
     cfg:       EditorConfig,
     canvas:    Canvas,
     toolbox:   Toolbox,
+    outline:   OutlinePanel,
     /// Current layout: "code" or "designer"
     layout:    String,
     /// The project directory (set by Open Project / New Project).
@@ -49,8 +52,8 @@ struct AppState {
 
     main_paned: Paned,
     vert_paned: Paned,
-    #[cfg(feature = "preview")]
-    editor_preview_paned: Paned,
+    left_nb:   GtkNotebook,
+    center_nb: GtkNotebook,
     minimap: Map,
 }
 
@@ -65,6 +68,7 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
     let find_bar   = FindBar::new();
     let canvas     = Canvas::new();
     let toolbox    = Toolbox::new();
+    let outline    = OutlinePanel::new();
 
     #[cfg(feature = "preview")]
     let preview = PreviewPane::new();
@@ -94,62 +98,44 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
     editor_col.append(&editor_body);
     editor_col.append(&find_bar.widget);
 
-    // Canvas sits to the right of the editor for .ui design
+    // ── Center notebook: Design (canvas) | Code (editor) ──────────
+    let center_nb = GtkNotebook::new();
+    center_nb.set_show_border(false);
+    center_nb.set_hexpand(true);
+    center_nb.set_vexpand(true);
+    canvas.widget.set_hexpand(true);
+    canvas.widget.set_vexpand(true);
+    center_nb.append_page(&canvas.widget,  Some(&Label::new(Some("  Design  "))));
+    center_nb.append_page(&editor_col,     Some(&Label::new(Some("  Code  "))));
+    center_nb.set_current_page(Some(1)); // start on Code tab
 
-    let canvas_paned = Paned::new(Orientation::Horizontal);
-    canvas_paned.set_start_child(Some(&editor_col));
-    canvas_paned.set_end_child(Some(&canvas.widget));
-    canvas_paned.set_resize_start_child(true);
-    canvas_paned.set_resize_end_child(true);
-    canvas_paned.set_shrink_start_child(false);
-    canvas_paned.set_shrink_end_child(false);
-    // Position is set dynamically on map to get true 50%
-    canvas.widget.set_visible(false); // hidden until a .ui file is opened
-
-    // Set canvas pane to 50% once the window is realized
-    {
-        let cp = canvas_paned.clone();
-        canvas_paned.connect_map(move |_| {
-            let width = cp.allocated_width();
-            if width > 0 {
-                cp.set_position(width / 2);
-            }
-        });
+    // ── Left notebook: Files (sidebar) | Widgets (toolbox) ────────
+    let left_nb = GtkNotebook::new();
+    left_nb.set_show_border(false);
+    left_nb.set_width_request(230);
+    sidebar.widget.set_visible(true);
+    toolbox.widget.set_visible(true);
+    outline.widget.set_visible(true);
+    left_nb.append_page(&sidebar.widget,  Some(&Label::new(Some("  Files  "))));
+    left_nb.append_page(&toolbox.widget,  Some(&Label::new(Some("  Widgets  "))));
+    left_nb.append_page(&outline.widget,  Some(&Label::new(Some("  Tree  "))));
+    if !cfg.show_sidebar {
+        left_nb.set_visible(false);
     }
 
     #[cfg(feature = "preview")]
-    let editor_preview_paned = {
-        let paned = Paned::new(Orientation::Horizontal);
-        paned.set_start_child(Some(&canvas_paned));
-        paned.set_end_child(Some(&preview.widget));
-        paned.set_resize_start_child(true);
-        paned.set_resize_end_child(true);
-        paned.set_position(800);
-        if !cfg.show_preview {
-            preview.widget.set_visible(false);
-        }
-        paned
-    };
-
-    #[cfg(not(feature = "preview"))]
-    let editor_preview_paned = canvas_paned.clone();
+    if !cfg.show_preview {
+        preview.widget.set_visible(false);
+    }
 
     let main_paned = Paned::new(Orientation::Horizontal);
-    main_paned.set_start_child(Some(&sidebar.widget));
-
-    // Toolbox sits between sidebar and editor (palette + inspector stacked)
-    let toolbox_editor_box = GtkBox::new(Orientation::Horizontal, 0);
-    toolbox_editor_box.append(&toolbox.widget);
-    toolbox_editor_box.append(&editor_preview_paned);
-    toolbox.widget.set_visible(false); // hidden until toggled
-
-    main_paned.set_end_child(Some(&toolbox_editor_box));
+    main_paned.set_start_child(Some(&left_nb));
+    main_paned.set_end_child(Some(&center_nb));
     main_paned.set_resize_start_child(false);
     main_paned.set_resize_end_child(true);
-    main_paned.set_position(210);
-    if !cfg.show_sidebar {
-        sidebar.widget.set_visible(false);
-    }
+    main_paned.set_shrink_start_child(false);
+    main_paned.set_shrink_end_child(false);
+    main_paned.set_position(230);
 
     let vert_paned = Paned::new(Orientation::Vertical);
     vert_paned.set_start_child(Some(&main_paned));
@@ -179,15 +165,16 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         cfg:       cfg.clone(),
         canvas:    canvas.clone(),
         toolbox:   toolbox.clone(),
+        outline:   outline.clone(),
         layout:    "code".into(),
         project_dir: None,
         main_paned: main_paned.clone(),
         vert_paned: vert_paned.clone(),
+        left_nb:   left_nb.clone(),
+        center_nb: center_nb.clone(),
         minimap:   minimap.clone(),
         #[cfg(feature = "preview")]
         preview:   preview.clone(),
-        #[cfg(feature = "preview")]
-        editor_preview_paned: editor_preview_paned.clone(),
     }));
 
     // ── Connect notebook tab-switch → statusbar + minimap + canvas ──
@@ -231,22 +218,22 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
             s.minimap.set_view(&tab.view);
             s.toolbox.set_buffer(&tab.buffer());
 
-            // Show canvas and connect toolbox if this is a .ui file
+            // Connect canvas, toolbox, and outline if this is a .ui file
             if let Some(path) = tab.path() {
                 if Canvas::is_ui_file(&path) {
-                    s.canvas.widget.set_visible(true);
                     s.canvas.connect_buffer(&tab.buffer());
                     s.toolbox.connect_buffer(&tab.buffer());
+                    s.outline.connect_buffer(&tab.buffer());
                     let (start, end) = tab.buffer().bounds();
                     let text = tab.buffer().text(&start, &end, false).to_string();
                     s.canvas.render(&text);
                 } else {
-                    s.canvas.widget.set_visible(false);
                     s.canvas.clear();
+                    s.outline.clear_buffer();
                 }
             } else {
-                s.canvas.widget.set_visible(false);
                 s.canvas.clear();
+                s.outline.clear_buffer();
             }
         });
     }
@@ -261,15 +248,18 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
             if let Some(tab) = s.notebook.current_tab() {
                 s.toolbox.set_buffer(&tab.buffer());
             }
-            // Activate canvas + toolbox if this is a .ui file
+            // Activate canvas + toolbox + outline if this is a .ui file
             if Canvas::is_ui_file(&path) {
                 if let Some(tab) = s.notebook.current_tab() {
-                    s.canvas.widget.set_visible(true);
                     s.canvas.connect_buffer(&tab.buffer());
                     s.toolbox.connect_buffer(&tab.buffer());
+                    s.outline.connect_buffer(&tab.buffer());
                     let (start, end) = tab.buffer().bounds();
                     let text = tab.buffer().text(&start, &end, false).to_string();
                     s.canvas.render(&text);
+                    // Switch to Design tab and Widgets panel
+                    s.center_nb.set_current_page(Some(0));
+                    s.left_nb.set_current_page(Some(1));
                 }
             }
             #[cfg(feature = "preview")]
@@ -299,8 +289,8 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
 
         let s = state.borrow();
         if saved_layout == "designer" {
-            s.canvas.widget.set_visible(true);
-            s.toolbox.widget.set_visible(true);
+            s.left_nb.set_current_page(Some(1));
+            s.center_nb.set_current_page(Some(0));
             s.minimap.set_visible(false);
         }
 
@@ -317,15 +307,17 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         if let Some(tab) = s.notebook.current_tab() {
             s.minimap.set_view(&tab.view);
             s.toolbox.set_buffer(&tab.buffer());
-            // If the last opened file is a .ui, activate canvas + toolbox
+            // If the last opened file is a .ui, activate canvas + toolbox + outline
             if let Some(path) = tab.path() {
                 if Canvas::is_ui_file(&path) {
-                    s.canvas.widget.set_visible(true);
                     s.canvas.connect_buffer(&tab.buffer());
                     s.toolbox.connect_buffer(&tab.buffer());
+                    s.outline.connect_buffer(&tab.buffer());
                     let (start, end) = tab.buffer().bounds();
                     let text = tab.buffer().text(&start, &end, false).to_string();
                     s.canvas.render(&text);
+                    s.center_nb.set_current_page(Some(0));
+                    s.left_nb.set_current_page(Some(1));
                 }
             }
         }
@@ -377,10 +369,12 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
                 }
                 tab.buffer().set_modified(false);
                 s.toolbox.set_buffer(&tab.buffer());
-                s.canvas.widget.set_visible(true);
                 s.canvas.connect_buffer(&tab.buffer());
                 s.toolbox.connect_buffer(&tab.buffer());
+                s.outline.connect_buffer(&tab.buffer());
                 s.canvas.render(template);
+                s.center_nb.set_current_page(Some(0));
+                s.left_nb.set_current_page(Some(1));
             }
         });
     }
@@ -423,16 +417,17 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
                         let ui_path = dir.join("layout.ui");
                         s.notebook.open_file(&ui_path, &s.cfg);
 
-                        // Activate canvas + toolbox for the .ui file
+                        // Activate canvas + toolbox + outline for the .ui file
                         if let Some(tab) = s.notebook.current_tab() {
                             s.toolbox.set_buffer(&tab.buffer());
-                            s.canvas.widget.set_visible(true);
-                            s.toolbox.widget.set_visible(true);
                             s.canvas.connect_buffer(&tab.buffer());
                             s.toolbox.connect_buffer(&tab.buffer());
+                            s.outline.connect_buffer(&tab.buffer());
                             let (start, end) = tab.buffer().bounds();
                             let text = tab.buffer().text(&start, &end, false).to_string();
                             s.canvas.render(&text);
+                            s.center_nb.set_current_page(Some(0));
+                            s.left_nb.set_current_page(Some(1));
                         }
 
                         // Also open main.rs so they can see the bootstrap
@@ -473,15 +468,17 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
                         if let Some(tab) = s.notebook.current_tab() {
                             s.toolbox.set_buffer(&tab.buffer());
                         }
-                        // Activate canvas + toolbox if this is a .ui file
+                        // Activate canvas + toolbox + outline if this is a .ui file
                         if Canvas::is_ui_file(&path) {
                             if let Some(tab) = s.notebook.current_tab() {
-                                s.canvas.widget.set_visible(true);
                                 s.canvas.connect_buffer(&tab.buffer());
                                 s.toolbox.connect_buffer(&tab.buffer());
+                                s.outline.connect_buffer(&tab.buffer());
                                 let (start, end) = tab.buffer().bounds();
                                 let text = tab.buffer().text(&start, &end, false).to_string();
                                 s.canvas.render(&text);
+                                s.center_nb.set_current_page(Some(0));
+                                s.left_nb.set_current_page(Some(1));
                             }
                         }
                     }
@@ -515,13 +512,14 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
                             s.notebook.open_file(&ui_path, &s.cfg);
                             if let Some(tab) = s.notebook.current_tab() {
                                 s.toolbox.set_buffer(&tab.buffer());
-                                s.canvas.widget.set_visible(true);
-                                s.toolbox.widget.set_visible(true);
                                 s.canvas.connect_buffer(&tab.buffer());
                                 s.toolbox.connect_buffer(&tab.buffer());
+                                s.outline.connect_buffer(&tab.buffer());
                                 let (start, end) = tab.buffer().bounds();
                                 let text = tab.buffer().text(&start, &end, false).to_string();
                                 s.canvas.render(&text);
+                                s.center_nb.set_current_page(Some(0));
+                                s.left_nb.set_current_page(Some(1));
                             }
                         }
 
@@ -680,8 +678,8 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         let st = state.clone();
         menubar::connect_action(app, "toggle-sidebar", move || {
             let s = st.borrow();
-            let vis = s.sidebar.widget.is_visible();
-            s.sidebar.widget.set_visible(!vis);
+            let vis = s.left_nb.is_visible();
+            s.left_nb.set_visible(!vis);
         });
     }
 
@@ -697,7 +695,9 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
     {
         let st = state.clone();
         menubar::connect_action(app, "toggle-canvas", move || {
-            st.borrow().canvas.toggle();
+            let s = st.borrow();
+            s.center_nb.set_current_page(Some(0));
+            s.left_nb.set_current_page(Some(1));
         });
     }
 
@@ -705,7 +705,8 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
     {
         let st = state.clone();
         menubar::connect_action(app, "toggle-toolbox", move || {
-            st.borrow().toolbox.toggle();
+            let s = st.borrow();
+            s.left_nb.set_current_page(Some(1));
         });
     }
 
@@ -748,12 +749,9 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         menubar::connect_action(app, "layout-code", move || {
             let mut s = st.borrow_mut();
             s.layout = "code".into();
-            s.sidebar.widget.set_visible(true);
-            s.main_paned.set_position(210);
-            s.canvas.widget.set_visible(false);
-            s.toolbox.widget.set_visible(false);
-            #[cfg(feature = "preview")]
-            s.preview.widget.set_visible(false);
+            s.left_nb.set_visible(true);
+            s.left_nb.set_current_page(Some(0)); // Files
+            s.center_nb.set_current_page(Some(1)); // Code
             s.minimap.set_visible(true);
             s.output.widget.set_visible(true);
         });
@@ -766,14 +764,11 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         menubar::connect_action(app, "layout-designer", move || {
             let mut s = st.borrow_mut();
             s.layout = "designer".into();
-            s.sidebar.widget.set_visible(true);
-            s.main_paned.set_position(210);
-            s.canvas.widget.set_visible(true);
-            s.toolbox.widget.set_visible(true);
-            #[cfg(feature = "preview")]
-            s.preview.widget.set_visible(false);
+            s.left_nb.set_visible(true);
+            s.left_nb.set_current_page(Some(1)); // Widgets
+            s.center_nb.set_current_page(Some(0)); // Design
             s.minimap.set_visible(false);
-            s.output.widget.set_visible(true);
+            s.output.widget.set_visible(false);
         });
     }
 

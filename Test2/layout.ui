@@ -20,26 +20,45 @@
           <object class="GtkLabel">
             <property name="label">Name Here</property>
             <layout>
-              <property name="column">2</property>
-              <property name="row">2</property>
+              <property name="column">1</property>
+              <property name="row">0</property>
+              <property name="column-span">1</property>
+              <property name="row-span">1</property>
             </layout>
-          </object>
-        </child>
-              <child>
-          <object class="GtkFrame">
-            <property name="label">Name Here</property>
-            <child>
-              <!-- Frame content -->
-            </child>
           </object>
         </child>
 
   <child>
         <object class="GtkButton" id="click_me">
           <property name="label">Click Me</property>
-        </object>
+        
+          <layout>
+            <property name="column">1</property>
+            <property name="row">1</property>
+            <property name="column-span">1</property>
+            <property name="row-span">1</property>
+          </layout></object>
       </child>
 </object>
     </child>
+  <child>
+    <object class="GtkFrame">
+      <property name="label">Frame Title</property>
+      <child>
+        <!-- Frame content -->
+      </child>
+          <child>
+        <object class="GtkSpinner">
+          <property name="spinning">true</property>
+        </object>
+      </child>
+  <child>
+    <object class="GtkProgressBar">
+      <property name="fraction">0.5</property>
+      <property name="show-text">true</property>
+    </object>
+  </child>
+</object>
+  </child>
 </object>
 </interface>

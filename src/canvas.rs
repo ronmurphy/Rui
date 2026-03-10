@@ -11,10 +11,10 @@
 use gtk4::prelude::*;
 use gtk4::{
     Adjustment, Box as GtkBox, Button, CenterBox, CheckButton,
-    DropDown, Entry, Expander, Frame, GestureClick, Grid, HeaderBar, Image,
-    Label, LevelBar, ListBox, Notebook, Orientation, Overlay, Paned,
-    PasswordEntry, Popover, ProgressBar, Scale, ScrolledWindow, SearchEntry,
-    Separator, SpinButton, Spinner, Switch, TextView, ToggleButton,
+    DragSource, DropDown, DropTarget, Entry, Expander, Frame, GestureClick,
+    Grid, HeaderBar, Image, Label, LevelBar, ListBox, Notebook, Orientation,
+    Overlay, Paned, PasswordEntry, Popover, ProgressBar, Scale, ScrolledWindow,
+    SearchEntry, Separator, SpinButton, Spinner, Switch, TextView, ToggleButton,
     Widget,
 };
 use std::cell::{Cell, RefCell};
@@ -66,15 +66,16 @@ impl Canvas {
         container.set_hexpand(true);
         container.set_vexpand(true);
 
-        let status = Label::new(Some("No .ui file open"));
-        status.set_halign(gtk4::Align::Start);
-        status.set_margin_start(8);
-        status.set_margin_end(8);
-        status.set_margin_top(4);
-        status.set_margin_bottom(4);
+        let status = Label::new(Some("Open a .ui file or create one via File → New .ui File"));
+        status.set_halign(gtk4::Align::Center);
+        status.set_valign(gtk4::Align::Center);
+        status.set_vexpand(true);
+        status.set_margin_start(24);
+        status.set_margin_end(24);
+        status.set_margin_top(8);
+        status.set_margin_bottom(8);
         status.add_css_class("dim-label");
         status.set_wrap(true);
-        status.set_selectable(true);
 
         let scroll = ScrolledWindow::builder()
             .hexpand(true)
@@ -82,16 +83,9 @@ impl Canvas {
             .child(&container)
             .build();
 
-        let header = Label::new(Some("Preview"));
-        header.set_halign(gtk4::Align::Start);
-        header.set_margin_start(8);
-        header.set_margin_top(4);
-        header.set_margin_bottom(2);
-        header.add_css_class("heading");
-
         let widget = GtkBox::new(Orientation::Vertical, 0);
-        widget.set_width_request(300);
-        widget.append(&header);
+        widget.set_hexpand(true);
+        widget.set_vexpand(true);
         widget.append(&status);
         widget.append(&scroll);
 
@@ -115,6 +109,8 @@ impl Canvas {
 
         if xml.trim().is_empty() {
             self.status.set_text("Empty buffer");
+            self.status.set_visible(true);
+            self.status.set_vexpand(true);
             return;
         }
 
@@ -123,6 +119,8 @@ impl Canvas {
             Ok(d) => d,
             Err(e) => {
                 self.status.set_text(&format!("XML error: {}", e));
+                self.status.set_visible(true);
+                self.status.set_vexpand(true);
                 return;
             }
         };
@@ -153,6 +151,8 @@ impl Canvas {
 
         if object_nodes.is_empty() {
             self.status.set_text("No <object> elements found");
+            self.status.set_visible(true);
+            self.status.set_vexpand(true);
             return;
         }
 
@@ -175,12 +175,16 @@ impl Canvas {
 
         if count == 0 {
             self.status.set_text("No renderable widgets found in .ui");
+            self.status.set_visible(true);
+            self.status.set_vexpand(true);
             return;
         }
 
         self.container.append(&result_box);
         *self.current_child.borrow_mut() = Some(result_box.upcast::<Widget>());
-        self.status.set_text(&format!("OK — {} top-level widget{}", count, if count == 1 { "" } else { "s" }));
+        // Hide placeholder, let the scroll area fill the canvas
+        self.status.set_visible(false);
+        self.status.set_vexpand(false);
     }
 
     /// Clear the preview pane.
@@ -188,7 +192,9 @@ impl Canvas {
         if let Some(old) = self.current_child.borrow_mut().take() {
             self.container.remove(&old);
         }
-        self.status.set_text("No .ui file open");
+        self.status.set_text("Open a .ui file or create one via File → New .ui File");
+        self.status.set_visible(true);
+        self.status.set_vexpand(true);
     }
 
     /// Connect to a sourceview5 Buffer so the preview auto-updates
@@ -466,22 +472,23 @@ fn attach_click_to_select(widget: &Widget, byte_offset: usize, ctx: &ClickCtx, c
     let class_owned = class.to_string();
     let id_owned = id.to_string();
 
-    gesture.connect_pressed(move |gesture, n_press, _x, _y| {
-        // Stop propagation so clicking a leaf widget doesn't also fire
-        // on every ancestor container
+    // Use connect_released (not connect_pressed) so that DragSource gets a
+    // chance to see motion events and claim the sequence for a drag before
+    // GestureClick denies it.  In Bubble phase, connect_released fires deepest
+    // widget first, so claiming here still prevents ancestor handlers from
+    // triggering.
+    gesture.connect_released(move |gesture, n_press, _x, _y| {
+        // Claim the sequence — stops the event propagating to ancestor widgets.
         gesture.set_state(gtk4::EventSequenceState::Claimed);
 
         // ── Selection outline ──
-        // Remove outline from previously-selected widget
         if let Some(prev) = selected_ref.borrow_mut().take() {
             prev.remove_css_class("canvas-selected");
         }
-        // Highlight the newly-selected widget
         widget_ref.add_css_class("canvas-selected");
         *selected_ref.borrow_mut() = Some(widget_ref.clone());
 
-        // For Expander: toggle expand/collapse since we claimed the click
-        // that would normally do this
+        // For Expander: toggle expand/collapse
         if is_expander {
             if let Some(exp) = widget_ref.downcast_ref::<Expander>() {
                 exp.set_expanded(!exp.is_expanded());
@@ -497,8 +504,6 @@ fn attach_click_to_select(widget: &Widget, byte_offset: usize, ctx: &ClickCtx, c
             // Move the editor cursor
             let iter = buffer.iter_at_offset(char_offset as i32);
             buffer.place_cursor(&iter);
-
-            // cursor-position-notify fires → inspector updates automatically
         }
 
         // Double-click → fire codegen callback
@@ -537,11 +542,9 @@ fn build_widget(node: roxmltree::Node, ctx: &ClickCtx) -> Option<Widget> {
             let sibling_classes: Rc<Vec<String>> = Rc::new(
                 collect_sibling_classes(node)
             );
-            let n_children = children.len();
-
             for (i, (_ty, child)) in children.iter().enumerate() {
-                // Right-click on child → popover with Move Up / Move Down / ↵ Into
-                if n_children > 1 && i < child_ranges.len() {
+                // Right-click on child → context popover
+                if i < child_ranges.len() {
                     let rc_gesture = GestureClick::new();
                     rc_gesture.set_button(3); // right-click
                     let idx = i;
@@ -582,9 +585,13 @@ fn build_widget(node: roxmltree::Node, ctx: &ClickCtx) -> Option<Widget> {
                         };
                         into_btn.set_sensitive(has_container_neighbor);
 
+                        let del_btn = Button::with_label("✕ Del");
+                        del_btn.add_css_class("flat");
+
                         pop_box.append(&up_btn);
                         pop_box.append(&down_btn);
                         pop_box.append(&into_btn);
+                        pop_box.append(&del_btn);
 
                         let popover = Popover::new();
                         popover.set_child(Some(&pop_box));
@@ -642,6 +649,21 @@ fn build_widget(node: roxmltree::Node, ctx: &ClickCtx) -> Option<Widget> {
                             });
                         }
 
+                        // Delete
+                        {
+                            let buf = buf_ref.clone();
+                            let xml = xml_rc.clone();
+                            let r = ranges.clone();
+                            let from = idx;
+                            let pop = popover.clone();
+                            del_btn.connect_clicked(move |_| {
+                                pop.popdown();
+                                if let Some(b) = buf.borrow().as_ref() {
+                                    delete_child_range(b, &xml, &r[from]);
+                                }
+                            });
+                        }
+
                         // Clean up popover when closed
                         {
                             let pop = popover.clone();
@@ -653,6 +675,31 @@ fn build_widget(node: roxmltree::Node, ctx: &ClickCtx) -> Option<Widget> {
                         popover.popup();
                     });
                     child.add_controller(rc_gesture);
+                }
+
+                // Drop target — reorder within this GtkBox
+                {
+                    let drop_tgt = DropTarget::new(
+                        String::static_type(),
+                        gtk4::gdk::DragAction::MOVE,
+                    );
+                    let dt_buf    = ctx.buffer.clone();
+                    let dt_xml    = ctx.xml.clone();
+                    let dt_ranges = child_ranges.clone();
+                    let dt_to     = i;
+                    drop_tgt.connect_drop(move |_, val, _x, _y| {
+                        if let Ok(s) = val.get::<String>() {
+                            if let Some((src_start, _)) = parse_child_range_payload(&s) {
+                                if let Some(from) = dt_ranges.iter().position(|r| r.start == src_start) {
+                                    if let Some(b) = dt_buf.borrow().as_ref() {
+                                        reorder_xml_children(b, &dt_xml, &dt_ranges, from, dt_to);
+                                    }
+                                }
+                            }
+                        }
+                        true
+                    });
+                    child.add_controller(drop_tgt);
                 }
 
                 b.append(child);
@@ -676,18 +723,18 @@ fn build_widget(node: roxmltree::Node, ctx: &ClickCtx) -> Option<Widget> {
             }
             apply_common_props(&g, &props);
 
-            // Collect child nodes with their <layout> properties for proper placement
+            // Collect child nodes with their <layout> properties and byte ranges
             let child_nodes: Vec<_> = node
                 .children()
                 .filter(|n| n.is_element() && n.tag_name().name() == "child")
                 .filter_map(|child_node| {
+                    let child_range = child_node.range();
                     let obj = child_node
                         .children()
                         .find(|n| n.is_element() && n.tag_name().name() == "object")?;
                     let widget = build_widget(obj, ctx)?;
-                    // Parse <layout> properties from the child's <object>
                     let layout = collect_layout_props(obj);
-                    Some((widget, layout))
+                    Some((widget, layout, child_range))
                 })
                 .collect();
 
@@ -712,13 +759,200 @@ fn build_widget(node: roxmltree::Node, ctx: &ClickCtx) -> Option<Widget> {
             } else {
                 // Attach children using layout properties or auto-stack
                 let mut auto_row = 0i32;
-                for (child, layout) in &child_nodes {
+                let mut occupied = std::collections::HashSet::<(i32, i32)>::new();
+                for (child, layout, child_range) in &child_nodes {
                     let col = layout.column.unwrap_or(0);
                     let row = layout.row.unwrap_or(auto_row);
                     let col_span = layout.column_span.unwrap_or(1);
                     let row_span = layout.row_span.unwrap_or(1);
                     g.attach(child, col, row, col_span, row_span);
                     auto_row = row + row_span;
+
+                    // Right-click → grid layout editor popover
+                    let rc_gesture = GestureClick::new();
+                    rc_gesture.set_button(3);
+                    let buf_ref = ctx.buffer.clone();
+                    let xml_rc = ctx.xml.clone();
+                    let child_for_pop = child.clone();
+                    let init_col = col;
+                    let init_row = row;
+                    let init_cs = col_span;
+                    let init_rs = row_span;
+                    let range = child_range.clone();
+
+                    rc_gesture.connect_pressed(move |gesture, _, _, _| {
+                        gesture.set_state(gtk4::EventSequenceState::Claimed);
+
+                        let pop_vbox = GtkBox::new(Orientation::Vertical, 4);
+                        pop_vbox.set_margin_start(8);
+                        pop_vbox.set_margin_end(8);
+                        pop_vbox.set_margin_top(6);
+                        pop_vbox.set_margin_bottom(6);
+
+                        // Helper: labelled SpinButton row
+                        let make_spin = |label_text: &str, init: i32| -> (GtkBox, SpinButton) {
+                            let row_box = GtkBox::new(Orientation::Horizontal, 8);
+                            let lbl = Label::new(Some(label_text));
+                            lbl.set_width_chars(10);
+                            lbl.set_halign(gtk4::Align::Start);
+                            let adj = Adjustment::new(init as f64, 0.0, 99.0, 1.0, 5.0, 0.0);
+                            let spin = SpinButton::new(Some(&adj), 1.0, 0);
+                            spin.set_width_chars(4);
+                            row_box.append(&lbl);
+                            row_box.append(&spin);
+                            (row_box, spin)
+                        };
+
+                        let (col_row_w, col_spin) = make_spin("Column:", init_col);
+                        let (row_row_w, row_spin) = make_spin("Row:", init_row);
+                        let (cs_row_w, cs_spin) = make_spin("Col span:", init_cs);
+                        let (rs_row_w, rs_spin) = make_spin("Row span:", init_rs);
+
+                        pop_vbox.append(&col_row_w);
+                        pop_vbox.append(&row_row_w);
+                        pop_vbox.append(&cs_row_w);
+                        pop_vbox.append(&rs_row_w);
+
+                        let btn_box = GtkBox::new(Orientation::Horizontal, 4);
+                        btn_box.set_margin_top(4);
+                        let apply_btn = Button::with_label("Apply");
+                        apply_btn.add_css_class("suggested-action");
+                        let gdel_btn = Button::with_label("✕ Del");
+                        gdel_btn.add_css_class("destructive-action");
+                        btn_box.append(&apply_btn);
+                        btn_box.append(&gdel_btn);
+                        pop_vbox.append(&btn_box);
+
+                        let popover = Popover::new();
+                        popover.set_child(Some(&pop_vbox));
+                        popover.set_parent(&child_for_pop);
+                        popover.set_autohide(true);
+
+                        // Apply layout changes
+                        {
+                            let buf = buf_ref.clone();
+                            let xml = xml_rc.clone();
+                            let r = range.clone();
+                            let col_s = col_spin.clone();
+                            let row_s = row_spin.clone();
+                            let cs_s = cs_spin.clone();
+                            let rs_s = rs_spin.clone();
+                            let pop = popover.clone();
+                            apply_btn.connect_clicked(move |_| {
+                                pop.popdown();
+                                if let Some(b) = buf.borrow().as_ref() {
+                                    update_grid_child_layout(
+                                        b, &xml, &r,
+                                        col_s.value() as i32,
+                                        row_s.value() as i32,
+                                        cs_s.value() as i32,
+                                        rs_s.value() as i32,
+                                    );
+                                }
+                            });
+                        }
+
+                        // Delete
+                        {
+                            let buf = buf_ref.clone();
+                            let xml = xml_rc.clone();
+                            let r = range.clone();
+                            let pop = popover.clone();
+                            gdel_btn.connect_clicked(move |_| {
+                                pop.popdown();
+                                if let Some(b) = buf.borrow().as_ref() {
+                                    delete_child_range(b, &xml, &r);
+                                }
+                            });
+                        }
+
+                        {
+                            let pop = popover.clone();
+                            popover.connect_closed(move |_| { pop.unparent(); });
+                        }
+
+                        popover.popup();
+                    });
+                    child.add_controller(rc_gesture);
+
+                    // Mark every cell covered by this widget
+                    for dr in 0..row_span {
+                        for dc in 0..col_span {
+                            occupied.insert((col + dc, row + dr));
+                        }
+                    }
+
+                    // Drop target on occupied cell — move dragged widget here
+                    {
+                        let drop_tgt = DropTarget::new(
+                            String::static_type(),
+                            gtk4::gdk::DragAction::MOVE,
+                        );
+                        let dt_buf = ctx.buffer.clone();
+                        let dt_xml = ctx.xml.clone();
+                        let dt_col = col;
+                        let dt_row = row;
+                        let dt_cs  = col_span;
+                        let dt_rs  = row_span;
+                        drop_tgt.connect_drop(move |_, val, _x, _y| {
+                            if let Ok(s) = val.get::<String>() {
+                                if let Some((src_start, src_end)) = parse_child_range_payload(&s) {
+                                    let src_range = src_start..src_end;
+                                    if let Some(b) = dt_buf.borrow().as_ref() {
+                                        update_grid_child_layout(b, &dt_xml, &src_range, dt_col, dt_row, dt_cs, dt_rs);
+                                    }
+                                }
+                            }
+                            true
+                        });
+                        child.add_controller(drop_tgt);
+                    }
+                }
+
+                // Add empty-cell placeholders for all grid positions not yet occupied.
+                // These act as drop targets so the user can drag widgets into empty cells.
+                let max_col = child_nodes.iter()
+                    .map(|(_, l, _)| l.column.unwrap_or(0) + l.column_span.unwrap_or(1))
+                    .max().unwrap_or(1);
+                let max_row_g = child_nodes.iter()
+                    .map(|(_, l, _)| l.row.unwrap_or(0) + l.row_span.unwrap_or(1))
+                    .max().unwrap_or(1);
+
+                for gr in 0..max_row_g + 1 {
+                    for gc in 0..max_col + 1 {
+                        if !occupied.contains(&(gc, gr)) {
+                            let ph = Frame::new(None);
+                            ph.set_hexpand(true);
+                            ph.set_vexpand(true);
+                            ph.set_size_request(60, 36);
+                            let coord_lbl = Label::new(Some(&format!("({},{})", gc, gr)));
+                            coord_lbl.add_css_class("dim-label");
+                            ph.set_child(Some(&coord_lbl));
+
+                            let drop_tgt = DropTarget::new(
+                                String::static_type(),
+                                gtk4::gdk::DragAction::MOVE,
+                            );
+                            let dt_buf = ctx.buffer.clone();
+                            let dt_xml = ctx.xml.clone();
+                            let dt_c = gc;
+                            let dt_r = gr;
+                            drop_tgt.connect_drop(move |_, val, _x, _y| {
+                                if let Ok(s) = val.get::<String>() {
+                                    if let Some((src_start, src_end)) = parse_child_range_payload(&s) {
+                                        let src_range = src_start..src_end;
+                                        if let Some(b) = dt_buf.borrow().as_ref() {
+                                            update_grid_child_layout(b, &dt_xml, &src_range, dt_c, dt_r, 1, 1);
+                                        }
+                                    }
+                                }
+                                true
+                            });
+                            ph.add_controller(drop_tgt);
+
+                            g.attach(&ph, gc, gr, 1, 1);
+                        }
+                    }
                 }
             }
             g.upcast()
@@ -1144,6 +1378,25 @@ fn build_widget(node: roxmltree::Node, ctx: &ClickCtx) -> Option<Widget> {
     let id = node.attribute("id").unwrap_or("");
     attach_click_to_select(&widget, byte_offset, ctx, class, id);
 
+    // Drag source — only for objects that are a direct <child> of a container.
+    // Payload: "{child_start}:{child_end}" byte range of the <child> block.
+    if let Some(parent_child) = node.parent()
+        .filter(|p| p.is_element() && p.tag_name().name() == "child")
+    {
+        let cr = parent_child.range();
+        let payload = format!("{}:{}", cr.start, cr.end);
+        let drag_src = DragSource::new();
+        drag_src.set_actions(gtk4::gdk::DragAction::MOVE);
+        // Capture phase so DragSource sees press/motion before the widget's
+        // own internal gesture handlers (GtkButton, GtkEntry, etc.) which
+        // live in Bubble phase — without this, interactive widgets can't be
+        // dragged because their built-in gestures claim the sequence first.
+        drag_src.set_propagation_phase(gtk4::PropagationPhase::Capture);
+        let content = gtk4::gdk::ContentProvider::for_value(&payload.to_value());
+        drag_src.set_content(Some(&content));
+        widget.add_controller(drag_src);
+    }
+
     Some(widget)
 }
 
@@ -1452,4 +1705,141 @@ fn reindent_block(block: &str, base_indent: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Container edit helpers (delete child, update grid layout)
+// ─────────────────────────────────────────────────────────────────────
+
+/// Find the byte length of a complete `<object>...</object>` block starting at `s[0]`.
+fn find_obj_close(s: &str) -> Option<usize> {
+    let mut depth = 0i32;
+    let mut pos = 0;
+    while pos < s.len() {
+        if s[pos..].starts_with("<object") {
+            depth += 1;
+            pos += 7;
+        } else if s[pos..].starts_with("</object>") {
+            depth -= 1;
+            if depth == 0 {
+                return Some(pos + 9);
+            }
+            pos += 9;
+        } else {
+            let ch_len = s[pos..].chars().next().map(|c| c.len_utf8()).unwrap_or(1);
+            pos += ch_len;
+        }
+    }
+    None
+}
+
+/// Delete a `<child>…</child>` block from the source buffer.
+/// Also removes the preceding indentation whitespace and the trailing newline.
+fn delete_child_range(buffer: &sourceview5::Buffer, xml: &str, range: &std::ops::Range<usize>) {
+    if range.start > xml.len() || range.end > xml.len() {
+        return;
+    }
+    // Walk back to start of line
+    let remove_start = xml[..range.start].rfind('\n').map(|i| i + 1).unwrap_or(0);
+    // Eat trailing newline
+    let remove_end = if range.end < xml.len() && xml.as_bytes()[range.end] == b'\n' {
+        range.end + 1
+    } else {
+        range.end
+    };
+    let char_start = xml[..remove_start].chars().count();
+    let char_end   = xml[..remove_end].chars().count();
+    let mut si = buffer.iter_at_offset(char_start as i32);
+    let mut ei = buffer.iter_at_offset(char_end as i32);
+    buffer.begin_user_action();
+    buffer.delete(&mut si, &mut ei);
+    buffer.end_user_action();
+}
+
+/// Replace (or create) the `<layout>` block inside a GtkGrid child's `<object>`
+/// with fresh column/row/column-span/row-span values.
+fn update_grid_child_layout(
+    buffer: &sourceview5::Buffer,
+    xml: &str,
+    child_range: &std::ops::Range<usize>,
+    col: i32,
+    row: i32,
+    col_span: i32,
+    row_span: i32,
+) {
+    if child_range.end > xml.len() {
+        return;
+    }
+    let child_block = &xml[child_range.clone()];
+
+    // Find the <object> inside this <child>
+    let obj_rel = match child_block.find("<object") {
+        Some(i) => i,
+        None => return,
+    };
+    let obj_abs_start = child_range.start + obj_rel;
+    let obj_text = &xml[obj_abs_start..child_range.end];
+
+    // Find the length of the <object>...</object> block (handles nesting)
+    let obj_len = match find_obj_close(obj_text) {
+        Some(e) => e,
+        None => return,
+    };
+    let obj_block = &xml[obj_abs_start..obj_abs_start + obj_len];
+
+    // Determine indentation of the <object> tag line
+    let obj_line_start = xml[..obj_abs_start].rfind('\n').map(|i| i + 1).unwrap_or(0);
+    let obj_indent: String = xml[obj_line_start..obj_abs_start]
+        .chars().take_while(|c| c.is_whitespace()).collect();
+    let layout_indent = format!("{}  ", obj_indent);
+    let prop_indent   = format!("{}    ", obj_indent);
+
+    let new_layout = format!(
+        "<layout>\n\
+{pi}<property name=\"column\">{col}</property>\n\
+{pi}<property name=\"row\">{row}</property>\n\
+{pi}<property name=\"column-span\">{cs}</property>\n\
+{pi}<property name=\"row-span\">{rs}</property>\n\
+{li}</layout>",
+        pi = prop_indent, li = layout_indent,
+        col = col, row = row, cs = col_span, rs = row_span
+    );
+
+    // Try to replace an existing <layout>...</layout>
+    if let Some(layout_rel) = obj_block.find("<layout>") {
+        if let Some(close_rel) = obj_block[layout_rel..].find("</layout>") {
+            let layout_abs_start = obj_abs_start + layout_rel;
+            let layout_abs_end   = obj_abs_start + layout_rel + close_rel + "</layout>".len();
+            let char_start = xml[..layout_abs_start].chars().count();
+            let char_end   = xml[..layout_abs_end].chars().count();
+            let mut si = buffer.iter_at_offset(char_start as i32);
+            let mut ei = buffer.iter_at_offset(char_end as i32);
+            buffer.begin_user_action();
+            buffer.delete(&mut si, &mut ei);
+            buffer.insert(&mut si, &new_layout);
+            buffer.end_user_action();
+            return;
+        }
+    }
+
+    // No <layout> block — insert one before </object>
+    let close_obj_rel = match obj_block.rfind("</object>") {
+        Some(i) => i,
+        None => return,
+    };
+    let insert_byte = obj_abs_start + close_obj_rel;
+    let insertion = format!("\n{}{}", layout_indent, new_layout);
+    let char_pos = xml[..insert_byte].chars().count();
+    let mut iter = buffer.iter_at_offset(char_pos as i32);
+    buffer.begin_user_action();
+    buffer.insert(&mut iter, &insertion);
+    buffer.end_user_action();
+}
+
+/// Parse a drag-and-drop payload of the form `"{start}:{end}"` into a byte range pair.
+fn parse_child_range_payload(s: &str) -> Option<(usize, usize)> {
+    let mut parts = s.splitn(2, ':');
+    let start = parts.next()?.parse::<usize>().ok()?;
+    let end   = parts.next()?.parse::<usize>().ok()?;
+    Some((start, end))
 }
