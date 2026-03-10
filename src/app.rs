@@ -51,6 +51,9 @@ struct AppState {
     #[cfg(feature = "preview")]
     preview: PreviewPane,
 
+    #[cfg(feature = "preview")]
+    ai_sidebar: crate::ai_panel::AiSidebar,
+
     main_paned: Paned,
     vert_paned: Paned,
     left_nb:   GtkNotebook,
@@ -232,9 +235,22 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         preview.widget.set_visible(false);
     }
 
+    // ── AI sidebar (right-hand panel, hidden until toggled) ────────
+    #[cfg(feature = "preview")]
+    let ai_sidebar = crate::ai_panel::AiSidebar::new();
+
+    // Wrap center_nb + AI sidebar in a horizontal box so the sidebar
+    // appears to the right of the designer/code area.
+    let center_area = GtkBox::new(Orientation::Horizontal, 0);
+    center_area.set_hexpand(true);
+    center_area.set_vexpand(true);
+    center_area.append(&center_nb);
+    #[cfg(feature = "preview")]
+    center_area.append(&ai_sidebar.widget);
+
     let main_paned = Paned::new(Orientation::Horizontal);
     main_paned.set_start_child(Some(&left_nb));
-    main_paned.set_end_child(Some(&center_nb));
+    main_paned.set_end_child(Some(&center_area));
     main_paned.set_resize_start_child(false);
     main_paned.set_resize_end_child(true);
     main_paned.set_shrink_start_child(false);
@@ -279,6 +295,8 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         minimap:   minimap.clone(),
         #[cfg(feature = "preview")]
         preview:   preview.clone(),
+        #[cfg(feature = "preview")]
+        ai_sidebar: ai_sidebar.clone(),
     }));
 
     // ── Connect notebook tab-switch → statusbar + minimap + canvas ──
@@ -1103,12 +1121,22 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         });
     }
 
-    // AI → Open AI Chat
+    // AI → Open AI Chat (toggle sidebar, resize window to fit)
     #[cfg(feature = "preview")]
     {
-        let win = window.clone();
+        let st = state.clone();
         menubar::connect_action(app, "ai-open", move || {
-            ai_panel::show_ai_panel(&win);
+            let s = st.borrow();
+            let now_visible = s.ai_sidebar.toggle();
+            let win = &s.window;
+            let cur_w = win.width();
+            let cur_h = win.height();
+            let delta = ai_panel::SIDEBAR_WIDTH;
+            if now_visible {
+                win.set_default_size(cur_w + delta, cur_h);
+            } else {
+                win.set_default_size((cur_w - delta).max(800), cur_h);
+            }
         });
     }
     #[cfg(not(feature = "preview"))]
