@@ -5,7 +5,7 @@ use gtk4::{
     Paned, ScrolledWindow, SelectionMode, SpinButton, Window,
 };
 use crate::config::EditorConfig;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -47,6 +47,11 @@ struct AppState {
     /// The project directory (set by Open Project / New Project).
     /// Used by Run/Build to find the correct Cargo.toml.
     project_dir: Option<PathBuf>,
+    /// Designer undo/redo history (XML snapshots on disk).
+    history: Rc<RefCell<crate::history::DesignerHistory>>,
+    /// True while an undo/redo operation is applying XML to the buffer,
+    /// so the buffer-changed hook skips taking a new snapshot.
+    history_applying: Rc<Cell<bool>>,
 
     #[cfg(feature = "preview")]
     preview: PreviewPane,
@@ -351,6 +356,8 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         outline:   outline.clone(),
         layout:    "code".into(),
         project_dir: None,
+        history: Rc::new(RefCell::new(crate::history::DesignerHistory::new())),
+        history_applying: Rc::new(Cell::new(false)),
         main_paned: main_paned.clone(),
         vert_paned: vert_paned.clone(),
         left_nb:   left_nb.clone(),
@@ -412,6 +419,34 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
                     let (start, end) = tab.buffer().bounds();
                     let text = tab.buffer().text(&start, &end, false).to_string();
                     s.canvas.render(&text);
+                    // Reset history and attach snapshot hook for this buffer
+                    s.history.borrow_mut().reset();
+                    {
+                        let hist = s.history.clone();
+                        let applying = s.history_applying.clone();
+                        let cnb = s.center_nb.clone();
+                        let gen_rc = Rc::new(Cell::new(0u64));
+                        let gen2 = gen_rc.clone();
+                        tab.buffer().connect_changed(move |buf| {
+                            if applying.get() { return; }
+                            if cnb.current_page() != Some(0) { return; }
+                            let gen = gen2.get().wrapping_add(1);
+                            gen2.set(gen);
+                            let hist2 = hist.clone();
+                            let gen3 = gen2.clone();
+                            let buf2 = buf.clone();
+                            gtk4::glib::timeout_add_local_once(
+                                std::time::Duration::from_millis(800),
+                                move || {
+                                    if gen3.get() == gen {
+                                        let (s, e) = buf2.bounds();
+                                        let text = buf2.text(&s, &e, false).to_string();
+                                        hist2.borrow_mut().push(&text);
+                                    }
+                                },
+                            );
+                        });
+                    }
                 } else {
                     s.canvas.clear();
                     s.outline.clear_buffer();
@@ -808,6 +843,50 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         menubar::connect_action(app, "select-all", move || {
             if let Some(tab) = st.borrow().notebook.current_tab() {
                 let _ = tab.view.activate_action("text.select-all", None);
+            }
+        });
+    }
+
+    // Edit → Designer Undo (Design mode only; Ctrl+Z)
+    {
+        let st = state.clone();
+        menubar::connect_action(app, "designer-undo", move || {
+            let s = st.borrow();
+            if s.center_nb.current_page() != Some(0) { return; }
+            let xml = s.history.borrow_mut().undo();
+            if let Some(xml) = xml {
+                s.history_applying.set(true);
+                if let Some(tab) = s.notebook.current_tab() {
+                    let buf = tab.buffer();
+                    buf.begin_user_action();
+                    let (mut start, mut end) = (buf.start_iter(), buf.end_iter());
+                    buf.delete(&mut start, &mut end);
+                    buf.insert(&mut buf.end_iter(), &xml);
+                    buf.end_user_action();
+                }
+                s.history_applying.set(false);
+            }
+        });
+    }
+
+    // Edit → Designer Redo (Design mode only; Ctrl+Y / Ctrl+Shift+Z)
+    {
+        let st = state.clone();
+        menubar::connect_action(app, "designer-redo", move || {
+            let s = st.borrow();
+            if s.center_nb.current_page() != Some(0) { return; }
+            let xml = s.history.borrow_mut().redo();
+            if let Some(xml) = xml {
+                s.history_applying.set(true);
+                if let Some(tab) = s.notebook.current_tab() {
+                    let buf = tab.buffer();
+                    buf.begin_user_action();
+                    let (mut start, mut end) = (buf.start_iter(), buf.end_iter());
+                    buf.delete(&mut start, &mut end);
+                    buf.insert(&mut buf.end_iter(), &xml);
+                    buf.end_user_action();
+                }
+                s.history_applying.set(false);
             }
         });
     }
@@ -1333,6 +1412,73 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
     app.set_accels_for_action("app.build",         &["<Ctrl><Shift>B"]);
     app.set_accels_for_action("app.stop",          &["<Shift>F5"]);
 
+    // ── Window-level key handler for designer undo/redo ──────────
+    // Intercepts Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z in Capture phase so that
+    // when in Design mode these are handled here (and propagation stopped),
+    // while in Code mode they fall through to the SourceView's built-in undo.
+    {
+        use gtk4::EventControllerKey;
+        use gtk4::gdk::Key;
+        use gtk4::gdk::ModifierType;
+
+        let st = state.clone();
+        let cnb = center_nb.clone();
+        let key_ctrl = EventControllerKey::new();
+        key_ctrl.set_propagation_phase(gtk4::PropagationPhase::Capture);
+
+        key_ctrl.connect_key_pressed(move |_, key, _, mods| {
+            let ctrl  = mods.contains(ModifierType::CONTROL_MASK);
+            let shift = mods.contains(ModifierType::SHIFT_MASK);
+
+            // Only intercept in Design tab
+            if cnb.current_page() != Some(0) {
+                return gtk4::glib::Propagation::Proceed;
+            }
+
+            if ctrl && !shift && key == Key::z {
+                // Designer undo
+                let s = st.borrow();
+                let xml = s.history.borrow_mut().undo();
+                if let Some(xml) = xml {
+                    s.history_applying.set(true);
+                    if let Some(tab) = s.notebook.current_tab() {
+                        let buf = tab.buffer();
+                        buf.begin_user_action();
+                        let (mut start, mut end) = (buf.start_iter(), buf.end_iter());
+                        buf.delete(&mut start, &mut end);
+                        buf.insert(&mut buf.end_iter(), &xml);
+                        buf.end_user_action();
+                    }
+                    s.history_applying.set(false);
+                }
+                return gtk4::glib::Propagation::Stop;
+            }
+
+            if ctrl && (key == Key::y || (shift && key == Key::z)) {
+                // Designer redo
+                let s = st.borrow();
+                let xml = s.history.borrow_mut().redo();
+                if let Some(xml) = xml {
+                    s.history_applying.set(true);
+                    if let Some(tab) = s.notebook.current_tab() {
+                        let buf = tab.buffer();
+                        buf.begin_user_action();
+                        let (mut start, mut end) = (buf.start_iter(), buf.end_iter());
+                        buf.delete(&mut start, &mut end);
+                        buf.insert(&mut buf.end_iter(), &xml);
+                        buf.end_user_action();
+                    }
+                    s.history_applying.set(false);
+                }
+                return gtk4::glib::Propagation::Stop;
+            }
+
+            gtk4::glib::Propagation::Proceed
+        });
+
+        window.add_controller(key_ctrl);
+    }
+
     // ── Save session on close ─────────────────────────────────────
     {
         let st = state.clone();
@@ -1422,6 +1568,57 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
                 }
             }
             gtk4::glib::ControlFlow::Continue
+        });
+    }
+
+    // ── Clean up history session dir on exit ──────────────────────
+    {
+        let st = state.clone();
+        app.connect_shutdown(move |_| {
+            st.borrow().history.borrow().cleanup();
+        });
+    }
+
+    // ── Crash recovery: check for orphaned sessions at startup ────
+    {
+        let win = window.clone();
+        let st = state.clone();
+        gtk4::glib::idle_add_local_once(move || {
+            let recoveries = crate::history::DesignerHistory::find_recoveries();
+            if recoveries.is_empty() { return; }
+
+            // Handle only the most recent orphaned session
+            let (session_dir, xml) = recoveries.into_iter().next().unwrap();
+
+            let dialog = gtk4::AlertDialog::builder()
+                .message("Recover designer session?")
+                .detail("Rui found an unsaved design session from a previous run that may have crashed. Would you like to recover it?")
+                .buttons(["Discard", "Recover"])
+                .default_button(1i32)
+                .cancel_button(0i32)
+                .build();
+
+            let st2 = st.clone();
+            dialog.choose(Some(&win), gtk4::gio::Cancellable::NONE, move |result| {
+                if result == Ok(1) {
+                    // Recover: open the XML in a new tab
+                    let s = st2.borrow();
+                    s.notebook.new_tab(&s.cfg);
+                    if let Some(tab) = s.notebook.current_tab() {
+                        tab.buffer().set_text(&xml);
+                        if let Some(lang) = sourceview5::LanguageManager::default().language("xml") {
+                            tab.buffer().set_language(Some(&lang));
+                        }
+                        s.canvas.connect_buffer(&tab.buffer());
+                        s.toolbox.connect_buffer(&tab.buffer());
+                        s.outline.connect_buffer(&tab.buffer());
+                        s.canvas.render(&xml);
+                        s.center_nb.set_current_page(Some(0));
+                        s.left_nb.set_current_page(Some(1));
+                    }
+                }
+                crate::history::DesignerHistory::discard_recovery(&session_dir);
+            });
         });
     }
 

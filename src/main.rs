@@ -27,6 +27,7 @@ mod palette;
 mod inspector;
 mod toolbox;
 mod templates;
+mod history;
 
 #[cfg(feature = "preview")]
 mod preview;

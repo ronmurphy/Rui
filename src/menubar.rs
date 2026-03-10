@@ -23,6 +23,10 @@ pub fn build(app: &Application) -> gtk4::PopoverMenuBar {
 
     // ── Edit ─────────────────────────────────────────────────────
     let edit_menu = Menu::new();
+    edit_menu.append(Some("Designer Undo"), Some("app.designer-undo"));
+    edit_menu.append(Some("Designer Redo"), Some("app.designer-redo"));
+    let edit_sep = gtk4::gio::Menu::new();
+    edit_menu.append_section(None, &edit_sep);
     edit_menu.append(Some("Cut"),        Some("app.cut"));
     edit_menu.append(Some("Copy"),       Some("app.copy"));
     edit_menu.append(Some("Paste"),      Some("app.paste"));
@@ -89,6 +93,7 @@ pub fn build(app: &Application) -> gtk4::PopoverMenuBar {
 
     for name in &[
         "new-tab", "new-project", "new-ui", "open", "open-project", "save", "save-all", "save-as", "close-tab",
+        "designer-undo", "designer-redo",
         "cut", "copy", "paste", "select-all", "find", "find-replace", "goto-line",
         "toggle-sidebar", "toggle-output", "toggle-canvas", "toggle-toolbox", "toggle-preview", "toggle-minimap", "toggle-dark",
         "layout-code", "layout-designer",
