@@ -1033,7 +1033,7 @@ fn build_widget(node: roxmltree::Node, ctx: &ClickCtx) -> Option<Widget> {
                         // Widget dropped here inherits this cell's full span.
                         let (dt_cs, dt_rs) = (col_span, row_span);
                         let is_merged_tgt = merged_flag;
-                        let merged_range  = child_range.clone();
+                        let _merged_range  = child_range.clone();
                         drop_tgt.connect_drop(move |_, val, _x, _y| {
                             if let Ok(s) = val.get::<String>() {
                                 if let Some((src_start, src_end)) = parse_child_range_payload(&s) {

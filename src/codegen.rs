@@ -270,7 +270,7 @@ pub fn generate_all_handlers(xml: &str, ui_filename: &str) -> String {
 
 /// Generate the handler snippet for a single widget (used by double-click).
 pub fn handler_for_widget(class: &str, id: &str) -> Option<String> {
-    let (signal, connect_method, closure_params) = signal_for_class(class)?;
+    let (signal, _connect_method, _closure_params) = signal_for_class(class)?;
     let mut counts = BTreeMap::new();
     let fn_name = make_fn_name(class, id, &mut counts);
     let short = class.strip_prefix("Gtk").unwrap_or(class);
@@ -809,7 +809,7 @@ pub fn show_template_library(
 ) {
     use gtk4::prelude::*;
     use gtk4::{
-        Dialog, Label, ListBox, ListBoxRow, Orientation, Box as GtkBox,
+        Dialog, Label, ListBox, Orientation, Box as GtkBox,
         ScrolledWindow, ResponseType,
     };
 
@@ -873,7 +873,7 @@ pub fn show_template_library(
     content.show();
 
     let nb = notebook.clone();
-    let cfg = cfg.clone();
+    let _cfg = cfg.clone();
     let lb = listbox.clone();
     dialog.connect_response(move |dlg, resp| {
         if resp == ResponseType::Accept {
