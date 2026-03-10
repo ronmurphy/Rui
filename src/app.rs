@@ -1,7 +1,8 @@
 use sourceview5::{prelude::*, Map};
 use gtk4::{
-    Application, ApplicationWindow, Box as GtkBox, FileDialog, Label,
-    Notebook as GtkNotebook, Orientation, Paned,
+    Align, Application, ApplicationWindow, Box as GtkBox, Button, CheckButton,
+    FileDialog, Label, Notebook as GtkNotebook, Orientation, Paned, SpinButton,
+    Window,
 };
 use crate::config::EditorConfig;
 use std::cell::RefCell;
@@ -55,6 +56,95 @@ struct AppState {
     left_nb:   GtkNotebook,
     center_nb: GtkNotebook,
     minimap: Map,
+}
+
+/// Show the "New .ui File" layout dialog.
+/// Calls `on_confirm(use_grid, rows, cols)` when the user clicks Create.
+fn show_layout_dialog(
+    parent: &ApplicationWindow,
+    on_confirm: impl Fn(bool, i32, i32) + 'static,
+) {
+    let dialog = Window::builder()
+        .title("New .ui File")
+        .modal(true)
+        .transient_for(parent)
+        .destroy_with_parent(true)
+        .resizable(false)
+        .default_width(320)
+        .build();
+
+    let outer = GtkBox::new(Orientation::Vertical, 16);
+    outer.set_margin_start(20);
+    outer.set_margin_end(20);
+    outer.set_margin_top(20);
+    outer.set_margin_bottom(20);
+
+    // ── Root layout choice ──
+    let box_radio  = CheckButton::with_label("GtkBox  (simple vertical list)");
+    let grid_radio = CheckButton::with_label("GtkGrid  (grid-based layout)");
+    grid_radio.set_group(Some(&box_radio));
+    grid_radio.set_active(true);
+    outer.append(&box_radio);
+    outer.append(&grid_radio);
+
+    // ── Grid dimensions ──
+    let dims = GtkBox::new(Orientation::Horizontal, 8);
+    dims.set_margin_top(4);
+
+    let rows_label = Label::new(Some("Rows:"));
+    let rows_spin  = SpinButton::with_range(1.0, 20.0, 1.0);
+    rows_spin.set_value(3.0);
+    rows_spin.set_width_chars(3);
+
+    let cols_label = Label::new(Some("Columns:"));
+    let cols_spin  = SpinButton::with_range(1.0, 20.0, 1.0);
+    cols_spin.set_value(4.0);
+    cols_spin.set_width_chars(3);
+
+    dims.append(&rows_label);
+    dims.append(&rows_spin);
+    dims.append(&cols_label);
+    dims.append(&cols_spin);
+    outer.append(&dims);
+
+    // Toggle dims sensitivity when radio changes
+    {
+        let dims_ref = dims.clone();
+        grid_radio.connect_toggled(move |btn| {
+            dims_ref.set_sensitive(btn.is_active());
+        });
+    }
+
+    // ── Buttons ──
+    let btn_row = GtkBox::new(Orientation::Horizontal, 8);
+    btn_row.set_halign(Align::End);
+    btn_row.set_margin_top(8);
+
+    let cancel_btn = Button::with_label("Cancel");
+    let create_btn = Button::with_label("Create");
+    create_btn.add_css_class("suggested-action");
+    btn_row.append(&cancel_btn);
+    btn_row.append(&create_btn);
+    outer.append(&btn_row);
+
+    dialog.set_child(Some(&outer));
+
+    {
+        let d = dialog.clone();
+        cancel_btn.connect_clicked(move |_| d.close());
+    }
+    {
+        let d = dialog.clone();
+        create_btn.connect_clicked(move |_| {
+            let use_grid = grid_radio.is_active();
+            let rows = rows_spin.value() as i32;
+            let cols = cols_spin.value() as i32;
+            d.close();
+            on_confirm(use_grid, rows, cols);
+        });
+    }
+
+    dialog.present();
 }
 
 pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
@@ -341,41 +431,32 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
     // File → New .ui File
     {
         let st = state.clone();
+        let win = window.clone();
         menubar::connect_action(app, "new-ui", move || {
-            let s = st.borrow();
-            s.notebook.new_tab(&s.cfg);
-            if let Some(tab) = s.notebook.current_tab() {
-                let template = r#"<?xml version="1.0" encoding="UTF-8"?>
-<interface>
-  <object class="GtkBox" id="main_box">
-    <property name="orientation">vertical</property>
-    <property name="spacing">8</property>
-    <property name="margin-start">12</property>
-    <property name="margin-end">12</property>
-    <property name="margin-top">12</property>
-    <property name="margin-bottom">12</property>
-    <child>
-      <!-- Add widgets here -->
-    </child>
-  </object>
-</interface>
-"#;
-                tab.buffer().set_text(template);
-                // Set XML language for syntax highlighting
-                if let Some(lang) = sourceview5::LanguageManager::default()
-                    .language("xml")
-                {
-                    tab.buffer().set_language(Some(&lang));
+            let st2 = st.clone();
+            show_layout_dialog(&win, move |use_grid, rows, cols| {
+                let template = if use_grid {
+                    crate::codegen::make_grid_template(rows, cols)
+                } else {
+                    crate::codegen::make_box_template()
+                };
+                let s = st2.borrow();
+                s.notebook.new_tab(&s.cfg);
+                if let Some(tab) = s.notebook.current_tab() {
+                    tab.buffer().set_text(&template);
+                    if let Some(lang) = sourceview5::LanguageManager::default().language("xml") {
+                        tab.buffer().set_language(Some(&lang));
+                    }
+                    tab.buffer().set_modified(false);
+                    s.toolbox.set_buffer(&tab.buffer());
+                    s.canvas.connect_buffer(&tab.buffer());
+                    s.toolbox.connect_buffer(&tab.buffer());
+                    s.outline.connect_buffer(&tab.buffer());
+                    s.canvas.render(&template);
+                    s.center_nb.set_current_page(Some(0));
+                    s.left_nb.set_current_page(Some(1));
                 }
-                tab.buffer().set_modified(false);
-                s.toolbox.set_buffer(&tab.buffer());
-                s.canvas.connect_buffer(&tab.buffer());
-                s.toolbox.connect_buffer(&tab.buffer());
-                s.outline.connect_buffer(&tab.buffer());
-                s.canvas.render(template);
-                s.center_nb.set_current_page(Some(0));
-                s.left_nb.set_current_page(Some(1));
-            }
+            });
         });
     }
 
@@ -385,14 +466,14 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         let win = window.clone();
         menubar::connect_action(app, "new-project", move || {
             let st2 = st.clone();
-            let dialog = FileDialog::builder()
+            let win2 = win.clone();
+            let file_dialog = FileDialog::builder()
                 .title("New Project — Select or Create a Folder")
                 .modal(true)
                 .build();
-            dialog.select_folder(Some(&win), gtk4::gio::Cancellable::NONE, move |result| {
+            file_dialog.select_folder(Some(&win), gtk4::gio::Cancellable::NONE, move |result| {
                 if let Ok(folder) = result {
                     if let Some(dir) = folder.path() {
-                        // Derive project name from folder name
                         let project_name = dir
                             .file_name()
                             .map(|n| n.to_string_lossy().to_string())
@@ -400,49 +481,51 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
                             .replace(' ', "_")
                             .to_lowercase();
 
-                        if let Err(e) = crate::codegen::scaffold_project(&dir, &project_name) {
-                            log::error!("Failed to scaffold project: {}", e);
-                            return;
-                        }
+                        // Show layout dialog before scaffolding
+                        let st3 = st2.clone();
+                        show_layout_dialog(&win2, move |use_grid, rows, cols| {
+                            let ui = if use_grid {
+                                crate::codegen::make_grid_template(rows, cols)
+                            } else {
+                                crate::codegen::make_box_template()
+                            };
 
-                        // Remember project directory for Run/Build
-                        st2.borrow_mut().project_dir = Some(dir.clone());
+                            if let Err(e) = crate::codegen::scaffold_project(&dir, &project_name, &ui) {
+                                log::error!("Failed to scaffold project: {}", e);
+                                return;
+                            }
 
-                        let s = st2.borrow();
+                            st3.borrow_mut().project_dir = Some(dir.clone());
 
-                        // Point sidebar at the new project
-                        s.sidebar.set_root(&dir);
+                            let s = st3.borrow();
+                            s.sidebar.set_root(&dir);
 
-                        // Open layout.ui in the editor
-                        let ui_path = dir.join("layout.ui");
-                        s.notebook.open_file(&ui_path, &s.cfg);
+                            let ui_path = dir.join("layout.ui");
+                            s.notebook.open_file(&ui_path, &s.cfg);
 
-                        // Activate canvas + toolbox + outline for the .ui file
-                        if let Some(tab) = s.notebook.current_tab() {
-                            s.toolbox.set_buffer(&tab.buffer());
-                            s.canvas.connect_buffer(&tab.buffer());
-                            s.toolbox.connect_buffer(&tab.buffer());
-                            s.outline.connect_buffer(&tab.buffer());
-                            let (start, end) = tab.buffer().bounds();
-                            let text = tab.buffer().text(&start, &end, false).to_string();
-                            s.canvas.render(&text);
-                            s.center_nb.set_current_page(Some(0));
-                            s.left_nb.set_current_page(Some(1));
-                        }
+                            if let Some(tab) = s.notebook.current_tab() {
+                                s.toolbox.set_buffer(&tab.buffer());
+                                s.canvas.connect_buffer(&tab.buffer());
+                                s.toolbox.connect_buffer(&tab.buffer());
+                                s.outline.connect_buffer(&tab.buffer());
+                                let (start, end) = tab.buffer().bounds();
+                                let text = tab.buffer().text(&start, &end, false).to_string();
+                                s.canvas.render(&text);
+                                s.center_nb.set_current_page(Some(0));
+                                s.left_nb.set_current_page(Some(1));
+                            }
 
-                        // Also open main.rs so they can see the bootstrap
-                        let main_path = dir.join("src").join("main.rs");
-                        s.notebook.open_file(&main_path, &s.cfg);
+                            let main_path = dir.join("src").join("main.rs");
+                            s.notebook.open_file(&main_path, &s.cfg);
+                            s.notebook.open_file(&ui_path, &s.cfg);
 
-                        // Switch back to the .ui tab
-                        s.notebook.open_file(&ui_path, &s.cfg);
-
-                        s.output.append_run_line(&format!(
-                            "✓ Created project \"{}\" → {}",
-                            project_name,
-                            dir.display()
-                        ));
-                        s.output.show_panel();
+                            s.output.append_run_line(&format!(
+                                "✓ Created project \"{}\" → {}",
+                                project_name,
+                                dir.display()
+                            ));
+                            s.output.show_panel();
+                        });
                     }
                 }
             });

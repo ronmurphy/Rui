@@ -7,7 +7,8 @@ pub fn build(app: &Application) -> gtk4::PopoverMenuBar {
 
     // ── File ─────────────────────────────────────────────────────
     let file_menu = Menu::new();
-    file_menu.append(Some("New"),            Some("app.new-tab"));
+    file_menu.append(Some("New .ui File…"),  Some("app.new-ui"));
+    file_menu.append(Some("New Tab"),        Some("app.new-tab"));
     file_menu.append(Some("New Project…"),  Some("app.new-project"));
     file_menu.append(Some("Open…"),         Some("app.open"));
     file_menu.append(Some("Open Project…"), Some("app.open-project"));

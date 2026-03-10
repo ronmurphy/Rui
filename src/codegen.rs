@@ -333,10 +333,51 @@ pub fn companion_path(ui_path: &Path) -> std::path::PathBuf {
     legacy
 }
 
+/// Generate a starter GtkBox .ui template.
+pub fn make_box_template() -> String {
+    r#"<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <object class="GtkBox" id="main_box">
+    <property name="orientation">vertical</property>
+    <property name="spacing">8</property>
+    <property name="margin-start">12</property>
+    <property name="margin-end">12</property>
+    <property name="margin-top">12</property>
+    <property name="margin-bottom">12</property>
+  </object>
+</interface>
+"#
+    .to_string()
+}
+
+/// Generate a starter GtkGrid .ui template with the given dimensions.
+/// Stores `rui-rows` / `rui-columns` as custom properties so the canvas
+/// knows the intended size before any widgets are placed.
+pub fn make_grid_template(rows: i32, cols: i32) -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <object class="GtkGrid" id="main_grid">
+    <property name="row-spacing">8</property>
+    <property name="column-spacing">8</property>
+    <property name="margin-start">12</property>
+    <property name="margin-end">12</property>
+    <property name="margin-top">12</property>
+    <property name="margin-bottom">12</property>
+    <property name="rui-rows">{rows}</property>
+    <property name="rui-columns">{cols}</property>
+  </object>
+</interface>
+"#
+    )
+}
+
 /// Scaffold a new GTK4 Rust project in the given directory.
 ///
 /// Creates: `Cargo.toml`, `layout.ui`, `src/main.rs`, `src/layout_app.rs`
-pub fn scaffold_project(dir: &Path, project_name: &str) -> std::io::Result<()> {
+/// Pass a `ui` string (from `make_box_template` or `make_grid_template`) to
+/// control what `layout.ui` contains.
+pub fn scaffold_project(dir: &Path, project_name: &str, ui: &str) -> std::io::Result<()> {
     let src_dir = dir.join("src");
     std::fs::create_dir_all(&src_dir)?;
 
@@ -354,29 +395,7 @@ gtk4 = {{ version = "0.9", features = ["v4_10"] }}
     );
     std::fs::write(dir.join("Cargo.toml"), &cargo_toml)?;
 
-    // ── layout.ui — starter template ──
-    let ui = r#"<?xml version="1.0" encoding="UTF-8"?>
-<interface>
-  <object class="GtkBox" id="main_box">
-    <property name="orientation">vertical</property>
-    <property name="spacing">8</property>
-    <property name="margin-start">12</property>
-    <property name="margin-end">12</property>
-    <property name="margin-top">12</property>
-    <property name="margin-bottom">12</property>
-    <child>
-      <object class="GtkLabel" id="hello_label">
-        <property name="label">Hello, World!</property>
-      </object>
-    </child>
-    <child>
-      <object class="GtkButton" id="click_me">
-        <property name="label">Click Me</property>
-      </object>
-    </child>
-  </object>
-</interface>
-"#;
+    // ── layout.ui — caller-supplied template ──
     std::fs::write(dir.join("layout.ui"), ui)?;
 
     // ── src/layout_app.rs — handler stubs generated from the template ──

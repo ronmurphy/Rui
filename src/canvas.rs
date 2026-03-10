@@ -739,12 +739,14 @@ fn build_widget(node: roxmltree::Node, ctx: &ClickCtx) -> Option<Widget> {
                 .collect();
 
             if child_nodes.is_empty() {
-                // No children — show placeholder grid based on row/column-spacing
-                // to give the user visual feedback
-                let n_rows = prop_val(&props, "n-rows")
+                // No children — show placeholder grid so the user has somewhere
+                // to drop widgets.  Use rui-rows/rui-columns if present.
+                let n_rows = prop_val(&props, "rui-rows")
+                    .or_else(|| prop_val(&props, "n-rows"))
                     .and_then(|v| v.trim().parse::<i32>().ok())
                     .unwrap_or(2);
-                let n_cols = prop_val(&props, "n-columns")
+                let n_cols = prop_val(&props, "rui-columns")
+                    .or_else(|| prop_val(&props, "n-columns"))
                     .and_then(|v| v.trim().parse::<i32>().ok())
                     .unwrap_or(2);
                 for r in 0..n_rows {
@@ -911,15 +913,26 @@ fn build_widget(node: roxmltree::Node, ctx: &ClickCtx) -> Option<Widget> {
 
                 // Add empty-cell placeholders for all grid positions not yet occupied.
                 // These act as drop targets so the user can drag widgets into empty cells.
-                let max_col = child_nodes.iter()
-                    .map(|(_, l, _)| l.column.unwrap_or(0) + l.column_span.unwrap_or(1))
-                    .max().unwrap_or(1);
-                let max_row_g = child_nodes.iter()
-                    .map(|(_, l, _)| l.row.unwrap_or(0) + l.row_span.unwrap_or(1))
-                    .max().unwrap_or(1);
+                // rui-rows / rui-columns are custom props set by make_grid_template so
+                // we know the intended dimensions even when no widgets are placed yet.
+                let rui_cols = prop_val(&props, "rui-columns")
+                    .and_then(|v| v.trim().parse::<i32>().ok());
+                let rui_rows = prop_val(&props, "rui-rows")
+                    .and_then(|v| v.trim().parse::<i32>().ok());
 
-                for gr in 0..max_row_g + 1 {
-                    for gc in 0..max_col + 1 {
+                let content_max_col = child_nodes.iter()
+                    .map(|(_, l, _)| l.column.unwrap_or(0) + l.column_span.unwrap_or(1))
+                    .max().unwrap_or(0);
+                let content_max_row = child_nodes.iter()
+                    .map(|(_, l, _)| l.row.unwrap_or(0) + l.row_span.unwrap_or(1))
+                    .max().unwrap_or(0);
+
+                // Use rui- dimensions as the floor; content may exceed them
+                let max_col   = rui_cols.unwrap_or(content_max_col).max(content_max_col);
+                let max_row_g = rui_rows.unwrap_or(content_max_row).max(content_max_row);
+
+                for gr in 0..max_row_g {
+                    for gc in 0..max_col {
                         if !occupied.contains(&(gc, gr)) {
                             let ph = Frame::new(None);
                             ph.set_hexpand(true);
