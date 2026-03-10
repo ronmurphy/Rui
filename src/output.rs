@@ -1,6 +1,6 @@
 use gtk4::prelude::*;
 use gtk4::{
-    Box as GtkBox, Notebook, Orientation, ScrolledWindow, TextBuffer, TextTag,
+    Box as GtkBox, Button, Notebook, Orientation, ScrolledWindow, TextBuffer, TextTag,
     TextView,
 };
 use std::cell::RefCell;
@@ -67,6 +67,21 @@ impl OutputPanel {
             &wrap_scroll(run_view.clone()),
             Some(&gtk4::Label::new(Some("Run"))),
         );
+
+        // Close button in the tab bar area
+        let close_btn = Button::builder()
+            .icon_name("window-close-symbolic")
+            .has_frame(false)
+            .tooltip_text("Close panel")
+            .build();
+        close_btn.add_css_class("flat");
+        {
+            let w = vbox.clone();
+            close_btn.connect_clicked(move |_| {
+                w.set_visible(false);
+            });
+        }
+        notebook.set_action_widget(&close_btn, gtk4::PackType::End);
 
         vbox.append(&notebook);
 

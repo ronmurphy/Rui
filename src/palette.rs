@@ -604,18 +604,24 @@ const CATEGORIES: &[Category] = &[
     },
 ];
 
+/// Canvas insert target: (byte_offset inside `<object>`, optional grid cell (col, row)).
+type InsertTarget = Option<(usize, Option<(i32, i32)>)>;
+
 /// The widget palette panel.
 #[derive(Clone)]
 pub struct Palette {
     pub widget: GtkBox,
     /// The buffer to insert snippets into (updated on tab switch).
     target_buffer: Rc<RefCell<Option<sourceview5::Buffer>>>,
+    /// When a canvas widget is selected (blue outline), insert new widgets there.
+    insert_target: Rc<RefCell<InsertTarget>>,
 }
 
 impl Palette {
     pub fn new() -> Self {
         let target_buffer: Rc<RefCell<Option<sourceview5::Buffer>>> =
             Rc::new(RefCell::new(None));
+        let insert_target: Rc<RefCell<InsertTarget>> = Rc::new(RefCell::new(None));
 
         let header = Label::new(Some("Widgets"));
         header.set_halign(gtk4::Align::Start);
@@ -649,12 +655,14 @@ impl Palette {
 
                 let snippet = entry.snippet;
                 let buf_ref = target_buffer.clone();
+                let target_ref = insert_target.clone();
 
                 btn.connect_clicked(move |_| {
                     let buf_opt = buf_ref.borrow();
                     match buf_opt.as_ref() {
                         Some(buf) => {
-                            insert_snippet(buf, snippet);
+                            let target = target_ref.borrow().clone();
+                            insert_snippet(buf, snippet, &target);
                         }
                         None => {
                             log::warn!("Palette: no buffer connected");
@@ -685,6 +693,7 @@ impl Palette {
         Palette {
             widget,
             target_buffer,
+            insert_target,
         }
     }
 
@@ -698,25 +707,49 @@ impl Palette {
         *self.target_buffer.borrow_mut() = None;
     }
 
+    /// Set the canvas insert target (called when a canvas widget is selected).
+    pub fn set_insert_target(&self, byte_offset: usize, grid_cell: Option<(i32, i32)>) {
+        *self.insert_target.borrow_mut() = Some((byte_offset, grid_cell));
+    }
+
+    /// Clear the insert target (e.g. when no widget is selected).
+    pub fn clear_insert_target(&self) {
+        *self.insert_target.borrow_mut() = None;
+    }
+
     pub fn toggle(&self) {
         self.widget.set_visible(!self.widget.is_visible());
     }
 }
 
-/// Insert a widget snippet as a `<child>` of the container surrounding the cursor.
+/// Insert a widget snippet as a `<child>` of the container surrounding the cursor
+/// (or the canvas-selected widget if `insert_target` is set).
 /// Falls back to raw cursor insertion if no container is found.
-fn insert_snippet(buffer: &sourceview5::Buffer, snippet: &str) {
+fn insert_snippet(buffer: &sourceview5::Buffer, snippet: &str, insert_target: &InsertTarget) {
     let (buf_start, buf_end) = buffer.bounds();
     let full_text = buffer.text(&buf_start, &buf_end, false).to_string();
-    let cursor = buffer.iter_at_mark(&buffer.get_insert());
-    let cursor_char = cursor.offset() as usize;
 
-    // Convert char offset to byte offset
-    let cursor_byte = full_text
-        .char_indices()
-        .nth(cursor_char)
-        .map(|(i, _)| i)
-        .unwrap_or(full_text.len());
+    // Use canvas-selected byte offset if available, else editor cursor.
+    let cursor_byte = if let Some((target_byte, _)) = insert_target {
+        (*target_byte).min(full_text.len())
+    } else {
+        let cursor = buffer.iter_at_mark(&buffer.get_insert());
+        let cursor_char = cursor.offset() as usize;
+        full_text
+            .char_indices()
+            .nth(cursor_char)
+            .map(|(i, _)| i)
+            .unwrap_or(full_text.len())
+    };
+
+    // If inserting into a specific grid cell, add <layout> to the snippet.
+    let with_layout;
+    let final_snippet = if let Some((_, Some((col, row)))) = insert_target {
+        with_layout = inject_grid_layout(snippet, *col, *row);
+        with_layout.as_str()
+    } else {
+        snippet
+    };
 
     // Try to find the nearest container and insert before its </object>
     if let Some(insert_byte) = find_container_insert_point(&full_text, cursor_byte) {
@@ -731,7 +764,7 @@ fn insert_snippet(buffer: &sourceview5::Buffer, snippet: &str) {
 
         let mut result = String::new();
         result.push_str(&format!("  {}<child>\n", base_indent));
-        for line in snippet.lines() {
+        for line in final_snippet.lines() {
             result.push_str(&format!("  {}  {}\n", base_indent, line));
         }
         result.push_str(&format!("  {}</child>\n", base_indent));
@@ -743,7 +776,20 @@ fn insert_snippet(buffer: &sourceview5::Buffer, snippet: &str) {
         buffer.end_user_action();
     } else {
         // Fallback: insert at cursor with local indentation
-        insert_snippet_at_cursor(buffer, snippet);
+        insert_snippet_at_cursor(buffer, final_snippet);
+    }
+}
+
+/// Inject `<layout>` with grid column/row before `</object>` in a snippet.
+fn inject_grid_layout(snippet: &str, col: i32, row: i32) -> String {
+    let layout = format!(
+        "<layout>\n<property name=\"column\">{}</property>\n<property name=\"row\">{}</property>\n<property name=\"column-span\">1</property>\n<property name=\"row-span\">1</property>\n</layout>",
+        col, row
+    );
+    if let Some(pos) = snippet.rfind("</object>") {
+        format!("{}{}\n{}", &snippet[..pos], layout, &snippet[pos..])
+    } else {
+        format!("{}\n{}", snippet, layout)
     }
 }
 

@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <object class="GtkGrid" id="main_grid">
+    <property name="row-spacing">8</property>
+    <property name="column-spacing">8</property>
+    <property name="margin-start">12</property>
+    <property name="margin-end">12</property>
+    <property name="margin-top">12</property>
+    <property name="margin-bottom">12</property>
+    <property name="rui-rows">7</property>
+    <property name="rui-columns">8</property>
+
+    <!-- Toolbar (row 0, all 8 columns) -->
+    <child>
+      <object class="GtkBox" id="toolbar">
+        <property name="orientation">horizontal</property>
+        <property name="spacing">6</property>
+        <property name="hexpand">true</property>
+        <child>
+          <object class="GtkButton" id="btn_new">
+            <property name="label">New</property>
+            <property name="tooltip-text">New file</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkButton" id="btn_open">
+            <property name="label">Open…</property>
+            <property name="tooltip-text">Open a file</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkButton" id="btn_save">
+            <property name="label">Save</property>
+            <property name="tooltip-text">Save current file</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkSeparator" id="toolbar_sep">
+            <property name="orientation">vertical</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkLabel" id="lbl_filename">
+            <property name="label">Untitled</property>
+            <property name="hexpand">true</property>
+            <property name="xalign">0.5</property>
+            <property name="ellipsize">middle</property>
+          </object>
+        </child>
+        <layout>
+          <property name="column">0</property>
+          <property name="row">0</property>
+          <property name="column-span">8</property>
+          <property name="row-span">1</property>
+        </layout>
+      </object>
+    </child>
+
+    <!-- Text editor (rows 1–5, all 8 columns) -->
+    <child>
+      <object class="GtkScrolledWindow" id="scrolled_window">
+        <property name="hexpand">true</property>
+        <property name="vexpand">true</property>
+        <child>
+          <object class="GtkTextView" id="text_view">
+            <property name="monospace">true</property>
+            <property name="wrap-mode">word-char</property>
+            <property name="left-margin">10</property>
+            <property name="right-margin">10</property>
+            <property name="top-margin">8</property>
+            <property name="bottom-margin">8</property>
+          </object>
+        </child>
+        <layout>
+          <property name="column">0</property>
+          <property name="row">1</property>
+          <property name="column-span">8</property>
+          <property name="row-span">5</property>
+        </layout>
+      </object>
+    </child>
+
+    <!-- Status bar (row 6, all 8 columns) -->
+    <child>
+      <object class="GtkLabel" id="lbl_status">
+        <property name="label">Ready</property>
+        <property name="hexpand">true</property>
+        <property name="xalign">0.0</property>
+        <layout>
+          <property name="column">0</property>
+          <property name="row">6</property>
+          <property name="column-span">8</property>
+          <property name="row-span">1</property>
+        </layout>
+      </object>
+    </child>
+
+  </object>
+</interface>

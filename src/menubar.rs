@@ -88,6 +88,7 @@ pub fn build(app: &Application) -> (gtk4::PopoverMenuBar, Menu, Menu) {
     // ── AI ────────────────────────────────────────────────────────
     let ai_menu = Menu::new();
     ai_menu.append(Some("Open AI Chat…"),        Some("app.ai-open"));
+    ai_menu.append(Some("Open Claude Code…"),    Some("app.claude-code-open"));
     ai_menu.append(Some("Copy File for AI"),     Some("app.ai-copy-file"));
     ai_menu.append(Some("Copy Selection for AI"), Some("app.ai-copy-selection"));
     ai_menu.append(Some("Apply AI Diff…"),       Some("app.ai-apply-diff"));
@@ -112,7 +113,7 @@ pub fn build(app: &Application) -> (gtk4::PopoverMenuBar, Menu, Menu) {
         "toggle-sidebar", "toggle-output", "toggle-canvas", "toggle-toolbox", "toggle-preview", "toggle-minimap", "toggle-dark",
         "layout-code", "layout-designer",
         "run", "build", "stop", "open-browser", "generate-handlers", "template-library",
-        "ai-open", "ai-copy-file", "ai-copy-selection", "ai-apply-diff",
+        "ai-open", "claude-code-open", "ai-copy-file", "ai-copy-selection", "ai-apply-diff",
         "help", "about",
     ] {
         let action = SimpleAction::new(name, None);

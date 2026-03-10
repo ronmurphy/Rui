@@ -15,6 +15,7 @@ use crate::goto;
 use crate::help;
 use crate::menubar;
 use crate::canvas::Canvas;
+use crate::claude_code::ClaudeCodePanel;
 use crate::outline::OutlinePanel;
 use crate::toolbox::Toolbox;
 
@@ -25,6 +26,20 @@ use crate::output::OutputPanel;
 use crate::runner::RunManager;
 use crate::sidebar::FileTree;
 use crate::statusbar::StatusBar;
+
+/// Resize a window that is already visible (set_default_size only works before show).
+fn resize_window(win: &ApplicationWindow, w: i32, h: i32) {
+    use gtk4::prelude::*;
+    // In GTK4 on Wayland/X11 the surface-level request is the correct way.
+    if let Some(surface) = win.surface() {
+        if let Some(toplevel) = surface.downcast_ref::<gtk4::gdk::ToplevelLayout>() {
+            // This path won't work — ToplevelLayout isn't the surface.
+            let _ = toplevel;
+        }
+    }
+    // The simplest GTK4 approach: set_default_size + queue_resize.
+    win.set_default_size(w, h);
+}
 
 #[cfg(feature = "preview")]
 use crate::preview::PreviewPane;
@@ -64,6 +79,8 @@ struct AppState {
 
     #[cfg(feature = "preview")]
     ai_sidebar: crate::ai_panel::AiSidebar,
+
+    claude_panel: ClaudeCodePanel,
 
     main_paned: Paned,
     vert_paned: Paned,
@@ -383,14 +400,18 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
     #[cfg(feature = "preview")]
     let ai_sidebar = crate::ai_panel::AiSidebar::new();
 
-    // Wrap center_nb + AI sidebar in a horizontal box so the sidebar
-    // appears to the right of the designer/code area.
+    // ── Claude Code panel (native CLI chat, always available) ─────
+    let claude_panel = ClaudeCodePanel::new();
+
+    // Wrap center_nb + AI sidebar + Claude panel in a horizontal box so
+    // sidebars appear to the right of the designer/code area.
     let center_area = GtkBox::new(Orientation::Horizontal, 0);
     center_area.set_hexpand(true);
     center_area.set_vexpand(true);
     center_area.append(&center_nb);
     #[cfg(feature = "preview")]
     center_area.append(&ai_sidebar.widget);
+    center_area.append(&claude_panel.widget);
 
     let main_paned = Paned::new(Orientation::Horizontal);
     main_paned.set_start_child(Some(&left_nb));
@@ -446,6 +467,7 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         preview:   preview.clone(),
         #[cfg(feature = "preview")]
         ai_sidebar: ai_sidebar.clone(),
+        claude_panel: claude_panel.clone(),
     }));
 
     // Populate MRU menus from saved state.
@@ -483,6 +505,15 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         let outline_ref = outline.clone();
         toolbox.on_delete_widget(move |start, end| {
             outline_ref.delete_child_bytes(start, end);
+        });
+    }
+
+    // Wire canvas widget selection → palette insert target.
+    // When a canvas widget gets the blue highlight, palette inserts land there.
+    {
+        let palette_ref = toolbox.palette.clone();
+        canvas.on_widget_select(move |byte_offset, grid_cell| {
+            palette_ref.set_insert_target(byte_offset, grid_cell);
         });
     }
 
@@ -1528,6 +1559,118 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
     #[cfg(not(feature = "preview"))]
     menubar::connect_action(app, "ai-open", move || {});
 
+    // AI → Open Claude Code (toggle panel, resize window)
+    {
+        let st = state.clone();
+        menubar::connect_action(app, "claude-code-open", move || {
+            let s = st.borrow();
+            let will_show = !s.claude_panel.is_visible();
+            let win = &s.window;
+            let delta = crate::claude_code::SIDEBAR_WIDTH;
+            if will_show {
+                // Extend the window first, then reveal the panel on the next frame.
+                resize_window(win, win.width() + delta, win.height());
+                let widget = s.claude_panel.widget.clone();
+                let input = s.claude_panel.input_widget().clone();
+                gtk4::glib::idle_add_local_once(move || {
+                    widget.set_visible(true);
+                    input.grab_focus();
+                });
+            } else {
+                // Hide the panel first, then shrink.
+                s.claude_panel.set_visible(false);
+                let w = win.clone();
+                let cur_w = win.width();
+                let cur_h = win.height();
+                gtk4::glib::idle_add_local_once(move || {
+                    resize_window(&w, (cur_w - delta).max(800), cur_h);
+                });
+            }
+        });
+    }
+
+    // Wire Claude Code callbacks.
+    {
+        let st = state.clone();
+        claude_panel.on_get_buffer(move || {
+            let s = st.borrow();
+            s.notebook.current_tab().map(|tab| {
+                let buf = tab.buffer();
+                let (start, end) = buf.bounds();
+                buf.text(&start, &end, false).to_string()
+            })
+        });
+    }
+    {
+        let st = state.clone();
+        claude_panel.on_get_path(move || {
+            let s = st.borrow();
+            s.notebook.current_tab()
+                .and_then(|tab| tab.path())
+                .map(|p| p.display().to_string())
+        });
+    }
+    // Get companion .rs file (path + contents) for the current .ui tab.
+    {
+        let st = state.clone();
+        claude_panel.on_get_companion(move || {
+            let s = st.borrow();
+            let tab = s.notebook.current_tab()?;
+            let ui_path = tab.path().filter(|p| Canvas::is_ui_file(p))?;
+            let companion = crate::codegen::companion_path(&ui_path);
+            let content = std::fs::read_to_string(&companion).ok()?;
+            Some((companion.display().to_string(), content))
+        });
+    }
+    // Apply XML block → replace .ui buffer contents.
+    {
+        let st = state.clone();
+        claude_panel.on_apply_xml(move |code| {
+            let s = st.borrow();
+            if let Some(tab) = s.notebook.current_tab() {
+                tab.buffer().set_text(code);
+            }
+        });
+    }
+    // Apply Rust block → write to companion .rs file, open it in editor.
+    {
+        let st = state.clone();
+        claude_panel.on_apply_rs(move |code| {
+            let s = st.borrow();
+            // Find the .ui tab's companion path.
+            let companion = s.notebook.current_tab()
+                .and_then(|t| t.path())
+                .filter(|p| Canvas::is_ui_file(p))
+                .map(|p| crate::codegen::companion_path(&p));
+
+            if let Some(companion) = companion {
+                // Write the code to disk.
+                if let Err(e) = std::fs::write(&companion, code) {
+                    log::error!("Failed to write companion: {}", e);
+                    return;
+                }
+                // Open (or switch to) the companion tab and refresh its buffer.
+                s.notebook.open_file(&companion, &s.cfg);
+                if let Some(tab) = s.notebook.current_tab() {
+                    tab.buffer().set_text(code);
+                    tab.buffer().set_modified(false);
+                    *tab.last_mtime.borrow_mut() = std::fs::metadata(&companion)
+                        .ok()
+                        .and_then(|m| m.modified().ok());
+                }
+            } else {
+                // No .ui file open — just open a new tab with the rust code.
+                s.notebook.new_tab(&s.cfg);
+                if let Some(tab) = s.notebook.current_tab() {
+                    tab.buffer().set_text(code);
+                    if let Some(lang) = sourceview5::LanguageManager::default().language("rust") {
+                        tab.buffer().set_language(Some(&lang));
+                    }
+                }
+            }
+        });
+    }
+
     // AI → Copy File for AI
     {
         let st = state.clone();
@@ -1716,6 +1859,7 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         let st = state.clone();
         window.connect_close_request(move |_| {
             let s = st.borrow();
+            s.claude_panel.kill_process();
             let paths: Vec<PathBuf> = s.notebook.all_tabs()
                 .iter()
                 .filter_map(|t| t.path())
@@ -1807,6 +1951,7 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
     {
         let st = state.clone();
         app.connect_shutdown(move |_| {
+            st.borrow().claude_panel.kill_process();
             st.borrow().history.borrow().cleanup();
         });
     }

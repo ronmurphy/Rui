@@ -153,16 +153,6 @@
       <property name="label">Click Me</property>
     </object>
   </child>
-  <child>
-    <object class="GtkButton">
-      <property name="label">Click Me</property>
-    </object>
-  </child>
-  <child>
-    <object class="GtkButton">
-      <property name="label">Click Me</property>
-    </object>
-  </child>
 </object>
         </child>
 </object>
@@ -234,5 +224,40 @@
 <property name="valign">end</property>
 </object>
   </child>
+
+      <child>
+        <object class="GtkNotebook">
+          <child>
+            <object class="GtkNotebookPage">
+              <property name="tab-label">Tab 1</property>
+              <property name="child">
+                <object class="GtkLabel">
+                  <property name="label">Tab content</property>
+                </object>
+              </property>
+            </object>
+          </child>
+        
+          <layout>
+            <property name="column">2</property>
+            <property name="row">1</property>
+            <property name="column-span">5</property>
+            <property name="row-span">1</property>
+          </layout></object>
+      </child>
+
+
+      <child>
+        <object class="GtkCalendar">
+          <property name="show-heading">true</property>
+          <property name="show-day-names">true</property>
+        
+          <layout>
+            <property name="column">2</property>
+            <property name="row">2</property>
+            <property name="column-span">3</property>
+            <property name="row-span">3</property>
+          </layout></object>
+      </child>
 </object>
 </interface>

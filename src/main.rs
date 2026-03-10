@@ -36,6 +36,8 @@ mod preview;
 #[cfg(feature = "preview")]
 mod ai_panel;
 
+mod claude_code;
+
 fn main() {
     env_logger::init();
 
