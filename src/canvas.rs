@@ -308,6 +308,16 @@ impl Canvas {
         });
     }
 
+    /// Re-render from the currently stored buffer (no-op if no buffer is set).
+    /// Call this when the Design tab becomes visible after being hidden.
+    pub fn render_from_buffer(&self) {
+        if let Some(buf) = self.source_buffer.borrow().as_ref() {
+            let (start, end) = buf.bounds();
+            let text = buf.text(&start, &end, false).to_string();
+            self.render(&text);
+        }
+    }
+
     /// Returns true if a .ui file is appropriate for preview.
     pub fn is_ui_file(path: &std::path::Path) -> bool {
         matches!(
@@ -855,6 +865,15 @@ fn build_widget(node: roxmltree::Node, ctx: &ClickCtx) -> Option<Widget> {
                         let span_lbl = Label::new(Some(&format!("{}×{}", col_span, row_span)));
                         span_lbl.add_css_class("dim-label");
                         f.set_child(Some(&span_lbl));
+                        // Add click-to-select gesture so clicking a merged cell
+                        // moves the cursor inside its <object> tag, enabling
+                        // palette inserts to land in the right container.
+                        let xml_str = ctx.xml.as_str();
+                        let child_block = &xml_str[child_range.clone()];
+                        if let Some(rel) = child_block.find("<object") {
+                            let byte_offset = child_range.start + rel + 7;
+                            attach_click_to_select(&f.clone().upcast::<Widget>(), byte_offset, ctx, "", "");
+                        }
                         (f.upcast::<Widget>(), span_lbl.upcast::<Widget>())
                     } else {
                         let w = child.clone();
@@ -1094,6 +1113,11 @@ fn build_widget(node: roxmltree::Node, ctx: &ClickCtx) -> Option<Widget> {
                                 true
                             });
                             ph.add_controller(drop_tgt);
+
+                            // Click-to-select: move cursor inside the GtkGrid
+                            // so palette inserts land in this grid, not outside.
+                            let grid_byte_offset = node.range().start + 7;
+                            attach_click_to_select(&ph.clone().upcast::<Widget>(), grid_byte_offset, ctx, "GtkGrid", "");
 
                             if ctx.merge_mode.get() {
                                 // Merge mode: overlay a CheckButton on the cell

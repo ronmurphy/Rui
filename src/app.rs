@@ -266,6 +266,19 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
     center_nb.append_page(&editor_col,     Some(&Label::new(Some("  Code  "))));
     center_nb.set_current_page(Some(1)); // start on Code tab
 
+    // Re-render the canvas whenever the Design tab becomes visible.
+    // This handles the case where the user was on the Code tab (possibly
+    // switching editor tabs to a non-.ui file which cleared the canvas),
+    // then switches back to the Design tab.
+    {
+        let canvas_ref = canvas.clone();
+        center_nb.connect_switch_page(move |_, _, page| {
+            if page == 0 {
+                canvas_ref.render_from_buffer();
+            }
+        });
+    }
+
     // ── Left notebook: Files (sidebar) | Widgets (toolbox) ────────
     let left_nb = GtkNotebook::new();
     left_nb.set_show_border(false);
@@ -1091,61 +1104,90 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         let st = state.clone();
         menubar::connect_action(app, "generate-handlers", move || {
             let s = st.borrow();
-            let ui_path = match s.notebook.current_tab().and_then(|t| t.path()) {
-                Some(p) if Canvas::is_ui_file(&p) => p,
-                _ => {
+
+            // Gather XML and optional file path from the current tab.
+            // Works for both saved .ui files and unsaved template buffers.
+            let (xml, maybe_ui_path) = match s.notebook.current_tab() {
+                Some(tab) => {
+                    let (start, end) = tab.buffer().bounds();
+                    let text = tab.buffer().text(&start, &end, false).to_string();
+                    let path = tab.path().filter(|p| Canvas::is_ui_file(p));
+                    // If no .ui path but content looks like a UI file, accept it.
+                    let looks_like_ui = text.contains("<interface") || text.contains("<object");
+                    if path.is_none() && !looks_like_ui {
+                        s.output.append_run_error(
+                            "Generate Handlers: current tab does not contain .ui XML.",
+                        );
+                        s.output.show_panel();
+                        return;
+                    }
+                    (text, path)
+                }
+                None => {
                     s.output.append_run_error(
-                        "Generate Handlers: open a .ui file first.",
+                        "Generate Handlers: open or create a .ui layout first.",
                     );
                     s.output.show_panel();
                     return;
                 }
             };
 
-            let xml = {
-                let tab = s.notebook.current_tab().unwrap();
-                let (start, end) = tab.buffer().bounds();
-                tab.buffer().text(&start, &end, false).to_string()
-            };
+            // Switch to Code view so the result is visible.
+            s.center_nb.set_current_page(Some(1));
+            s.left_nb.set_current_page(Some(0));
+            s.minimap.set_visible(true);
+            s.output.widget.set_visible(true);
 
-            let companion = crate::codegen::companion_path(&ui_path);
-            let existing = std::fs::read_to_string(&companion).unwrap_or_default();
-            let ui_filename = ui_path
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_default();
+            if let Some(ui_path) = maybe_ui_path {
+                // ── Saved .ui file: write companion to disk ──────────────────
+                let companion = crate::codegen::companion_path(&ui_path);
+                let existing = std::fs::read_to_string(&companion).unwrap_or_default();
+                let ui_filename = ui_path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default();
 
-            let new_content = if existing.is_empty() {
-                crate::codegen::generate_all_handlers(&xml, &ui_filename)
-            } else {
-                crate::codegen::merge_handlers(&existing, &xml, &ui_filename)
-            };
+                let new_content = if existing.is_empty() {
+                    crate::codegen::generate_all_handlers(&xml, &ui_filename)
+                } else {
+                    crate::codegen::merge_handlers(&existing, &xml, &ui_filename)
+                };
 
-            if let Err(e) = std::fs::write(&companion, &new_content) {
-                s.output.append_run_error(&format!(
-                    "Failed to write {}: {}",
-                    companion.display(),
-                    e
+                if let Err(e) = std::fs::write(&companion, &new_content) {
+                    s.output.append_run_error(&format!(
+                        "Failed to write {}: {}", companion.display(), e
+                    ));
+                    s.output.show_panel();
+                    return;
+                }
+
+                s.notebook.open_file(&companion, &s.cfg);
+
+                // Force-refresh the buffer so there's no stale-disk prompt.
+                if let Some(tab) = s.notebook.current_tab() {
+                    tab.buffer().set_text(&new_content);
+                    tab.buffer().set_modified(false);
+                    *tab.last_mtime.borrow_mut() = std::fs::metadata(&companion)
+                        .ok()
+                        .and_then(|m| m.modified().ok());
+                }
+
+                s.output.append_run_line(&format!(
+                    "✓ Generated handlers → {}", companion.display()
                 ));
-                s.output.show_panel();
-                return;
+            } else {
+                // ── Unsaved template buffer: open generated code in new tab ──
+                let new_content = crate::codegen::generate_all_handlers(&xml, "layout.ui");
+                s.notebook.new_tab(&s.cfg);
+                if let Some(tab) = s.notebook.current_tab() {
+                    tab.buffer().set_text(&new_content);
+                    tab.buffer().set_modified(true); // mark unsaved so Ctrl+S prompts for path
+                }
+                s.output.append_run_line(
+                    "✓ Generated handlers (unsaved) — use Ctrl+S to save as a .rs file.",
+                );
             }
 
-            s.notebook.open_file(&companion, &s.cfg);
-
-            // Force-refresh the buffer so there's no stale-disk prompt
-            if let Some(tab) = s.notebook.current_tab() {
-                tab.buffer().set_text(&new_content);
-                tab.buffer().set_modified(false);
-                *tab.last_mtime.borrow_mut() = std::fs::metadata(&companion)
-                    .ok()
-                    .and_then(|m| m.modified().ok());
-            }
-
-            s.output.append_run_line(&format!(
-                "✓ Generated handlers → {}",
-                companion.display()
-            ));
             s.output.show_panel();
         });
     }
