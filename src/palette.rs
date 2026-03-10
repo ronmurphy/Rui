@@ -138,6 +138,110 @@ const CATEGORIES: &[Category] = &[
   </child>
 </object>"#,
             },
+            WidgetEntry {
+                name: "Paned (Vertical)",
+                icon: "\u{F07D}",  // nf-fa-arrows_v
+                snippet: r#"<object class="GtkPaned">
+  <property name="orientation">vertical</property>
+  <child>
+    <object class="GtkLabel">
+      <property name="label">Top</property>
+    </object>
+  </child>
+  <child>
+    <object class="GtkLabel">
+      <property name="label">Bottom</property>
+    </object>
+  </child>
+</object>"#,
+            },
+            WidgetEntry {
+                name: "ListBox",
+                icon: "\u{F03A}",  // nf-fa-list
+                snippet: r#"<object class="GtkListBox">
+  <property name="selection-mode">single</property>
+  <child>
+    <object class="GtkLabel">
+      <property name="label">Item 1</property>
+      <property name="xalign">0</property>
+    </object>
+  </child>
+  <child>
+    <object class="GtkLabel">
+      <property name="label">Item 2</property>
+      <property name="xalign">0</property>
+    </object>
+  </child>
+</object>"#,
+            },
+            WidgetEntry {
+                name: "FlowBox",
+                icon: "\u{F009}",  // nf-fa-th_large
+                snippet: r#"<object class="GtkFlowBox">
+  <property name="max-children-per-line">4</property>
+  <property name="selection-mode">none</property>
+  <child>
+    <object class="GtkLabel">
+      <property name="label">Item 1</property>
+    </object>
+  </child>
+  <child>
+    <object class="GtkLabel">
+      <property name="label">Item 2</property>
+    </object>
+  </child>
+  <child>
+    <object class="GtkLabel">
+      <property name="label">Item 3</property>
+    </object>
+  </child>
+</object>"#,
+            },
+            WidgetEntry {
+                name: "Revealer",
+                icon: "\u{F070}",  // nf-fa-eye_slash
+                snippet: r#"<object class="GtkRevealer">
+  <property name="transition-type">slide-down</property>
+  <property name="reveal-child">true</property>
+  <child>
+    <object class="GtkLabel">
+      <property name="label">Revealed content</property>
+    </object>
+  </child>
+</object>"#,
+            },
+            WidgetEntry {
+                name: "Overlay",
+                icon: "\u{F1B2}",  // nf-fa-cube
+                snippet: r#"<object class="GtkOverlay">
+  <child>
+    <object class="GtkLabel">
+      <property name="label">Base layer</property>
+    </object>
+  </child>
+  <child type="overlay">
+    <object class="GtkLabel">
+      <property name="label">Overlay</property>
+      <property name="halign">end</property>
+      <property name="valign">end</property>
+      <property name="margin-end">8</property>
+      <property name="margin-bottom">8</property>
+    </object>
+  </child>
+</object>"#,
+            },
+            WidgetEntry {
+                name: "AspectFrame",
+                icon: "\u{F096}",  // nf-fa-square_o
+                snippet: r#"<object class="GtkAspectFrame">
+  <property name="ratio">1.777</property>
+  <child>
+    <object class="GtkLabel">
+      <property name="label">16:9 area</property>
+    </object>
+  </child>
+</object>"#,
+            },
         ],
     },
     Category {
@@ -188,6 +292,51 @@ const CATEGORIES: &[Category] = &[
   <property name="value">0.6</property>
   <property name="min-value">0</property>
   <property name="max-value">1</property>
+</object>"#,
+            },
+            WidgetEntry {
+                name: "Picture",
+                icon: "\u{F1C5}",  // nf-fa-file_image_o
+                snippet: r#"<object class="GtkPicture">
+  <property name="content-fit">contain</property>
+  <property name="width-request">200</property>
+  <property name="height-request">150</property>
+</object>"#,
+            },
+            WidgetEntry {
+                name: "Calendar",
+                icon: "\u{F073}",  // nf-fa-calendar
+                snippet: r#"<object class="GtkCalendar">
+  <property name="show-heading">true</property>
+  <property name="show-day-names">true</property>
+</object>"#,
+            },
+            WidgetEntry {
+                name: "DrawingArea",
+                icon: "\u{F044}",  // nf-fa-pencil_square_o
+                snippet: r#"<object class="GtkDrawingArea">
+  <property name="hexpand">true</property>
+  <property name="vexpand">true</property>
+  <property name="width-request">200</property>
+  <property name="height-request">150</property>
+</object>"#,
+            },
+            WidgetEntry {
+                name: "Video",
+                icon: "\u{F03D}",  // nf-fa-film
+                snippet: r#"<object class="GtkVideo">
+  <property name="hexpand">true</property>
+  <property name="vexpand">true</property>
+</object>"#,
+            },
+            WidgetEntry {
+                name: "GLArea",
+                icon: "\u{F1B2}",  // nf-fa-cube
+                snippet: r#"<object class="GtkGLArea">
+  <property name="hexpand">true</property>
+  <property name="vexpand">true</property>
+  <property name="width-request">200</property>
+  <property name="height-request">150</property>
 </object>"#,
             },
         ],
@@ -295,6 +444,44 @@ const CATEGORIES: &[Category] = &[
   </property>
 </object>"#,
             },
+            WidgetEntry {
+                name: "MenuButton",
+                icon: "\u{F0C9}",  // nf-fa-bars (hamburger menu)
+                snippet: r#"<object class="GtkMenuButton">
+  <property name="icon-name">open-menu-symbolic</property>
+  <property name="tooltip-text">Menu</property>
+</object>"#,
+            },
+            WidgetEntry {
+                name: "LinkButton",
+                icon: "\u{F0C1}",  // nf-fa-link
+                snippet: r#"<object class="GtkLinkButton">
+  <property name="label">Visit website</property>
+  <property name="uri">https://example.com</property>
+</object>"#,
+            },
+            WidgetEntry {
+                name: "ColorDialogButton",
+                icon: "\u{F1FC}",  // nf-fa-paint_brush
+                snippet: r#"<object class="GtkColorDialogButton">
+  <property name="dialog">
+    <object class="GtkColorDialog">
+      <property name="with-alpha">false</property>
+    </object>
+  </property>
+</object>"#,
+            },
+            WidgetEntry {
+                name: "FontDialogButton",
+                icon: "\u{F035}",  // nf-fa-text_height
+                snippet: r#"<object class="GtkFontDialogButton">
+  <property name="dialog">
+    <object class="GtkFontDialog">
+      <property name="title">Choose Font</property>
+    </object>
+  </property>
+</object>"#,
+            },
         ],
     },
     Category {
@@ -364,6 +551,53 @@ const CATEGORIES: &[Category] = &[
       <property name="label">Hidden content</property>
     </object>
   </child>
+</object>"#,
+            },
+            WidgetEntry {
+                name: "WindowHandle",
+                icon: "\u{F047}",  // nf-fa-expand (draggable area)
+                snippet: r#"<object class="GtkWindowHandle">
+  <child>
+    <object class="GtkLabel">
+      <property name="label">Drag to move window</property>
+      <property name="halign">center</property>
+    </object>
+  </child>
+</object>"#,
+            },
+            WidgetEntry {
+                name: "CenterBox",
+                icon: "\u{F0B2}",  // nf-fa-arrows (center layout)
+                snippet: r#"<object class="GtkCenterBox">
+  <child type="start">
+    <object class="GtkLabel">
+      <property name="label">Start</property>
+    </object>
+  </child>
+  <child type="center">
+    <object class="GtkLabel">
+      <property name="label">Center</property>
+    </object>
+  </child>
+  <child type="end">
+    <object class="GtkLabel">
+      <property name="label">End</property>
+    </object>
+  </child>
+</object>"#,
+            },
+            WidgetEntry {
+                name: "StackSwitcher",
+                icon: "\u{F009}",  // nf-fa-th_large (tab switcher)
+                snippet: r#"<object class="GtkStackSwitcher">
+  <property name="stack">my_stack</property>
+</object>"#,
+            },
+            WidgetEntry {
+                name: "StackSidebar",
+                icon: "\u{F03A}",  // nf-fa-list (sidebar nav)
+                snippet: r#"<object class="GtkStackSidebar">
+  <property name="stack">my_stack</property>
 </object>"#,
             },
         ],

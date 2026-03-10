@@ -59,11 +59,6 @@
         </object>
       </child>
   <child>
-    <object class="GtkSpinner">
-      <property name="spinning">true</property>
-    </object>
-  </child>
-  <child>
     <object class="GtkButton">
       <property name="label">Click Me</property>
     </object>
@@ -98,27 +93,26 @@
       <property name="draw-value">true</property>
     </object>
   </child>
+
+      <layout>
+        <property name="column">0</property>
+        <property name="row">1</property>
+        <property name="column-span">1</property>
+        <property name="row-span">5</property>
+      </layout>        <child>
+          <object class="GtkSpinner">
+            <property name="spinning">true</property>
+                    <property name="halign">center</property>
+<property name="valign">center</property>
+<property name="vexpand">true</property>
+<property name="hexpand">true</property>
+</object>
+        </child>
 </object>
   </child>
 </object>
       </child>
 
-      <child>
-        <object class="GtkTextView">
-          <property name="editable">true</property>
-          <property name="wrap-mode">word</property>
-          <property name="hexpand">false</property>
-          <property name="vexpand">false</property>
-        
-          <layout>
-            <property name="column">1</property>
-            <property name="row">1</property>
-            <property name="column-span">6</property>
-            <property name="row-span">4</property>
-          </layout>          <property name="halign">fill</property>
-<property name="valign">fill</property>
-</object>
-      </child>
 
   <child>
     <object class="GtkFrame">
@@ -195,19 +189,50 @@
                 <child>
                   <!-- Add children here -->
                 </child>
-              </object>
+                              <child>
+                  <object class="GtkSeparator">
+                    <property name="orientation">horizontal</property>
+                  </object>
+                </child>
+</object>
             </child>
-  <child>
-    <object class="GtkSeparator">
-      <property name="orientation">horizontal</property>
-    </object>
-  </child>
-  <child>
-    <object class="GtkSeparator">
-      <property name="orientation">horizontal</property>
-    </object>
-  </child>
 </object>
       </child>
+  <child>
+    <object class="GtkVideo">
+      <property name="hexpand">true</property>
+      <property name="vexpand">true</property>
+    
+      <layout>
+        <property name="column">1</property>
+        <property name="row">1</property>
+        <property name="column-span">1</property>
+        <property name="row-span">1</property>
+      </layout></object>
+  </child>
+  <child>
+    <object class="GtkEntry">
+      <property name="placeholder-text">Type here…</property>
+    
+      <layout>
+        <property name="column">1</property>
+        <property name="row">2</property>
+        <property name="column-span">1</property>
+        <property name="row-span">1</property>
+      </layout></object>
+  </child>
+  <child>
+    <object class="GtkSpinner">
+      <property name="spinning">true</property>
+    
+      <layout>
+        <property name="column">1</property>
+        <property name="row">2</property>
+        <property name="column-span">1</property>
+        <property name="row-span">1</property>
+      </layout>      <property name="halign">end</property>
+<property name="valign">end</property>
+</object>
+  </child>
 </object>
 </interface>

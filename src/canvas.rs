@@ -47,6 +47,8 @@ struct ClickCtx {
     apply_btn: Button,
     /// The <child> byte range of the currently selected widget (for Del key).
     selected_child_range: Rc<RefCell<Option<std::ops::Range<usize>>>>,
+    /// Map byte_offset → Widget, populated during render.
+    offset_to_widget: Rc<RefCell<std::collections::HashMap<usize, Widget>>>,
 }
 
 /// The live preview panel shown beside the editor.
@@ -78,6 +80,10 @@ pub struct Canvas {
     apply_btn: Button,
     /// Byte range of the currently-selected widget's <child> block.
     selected_child_range: Rc<RefCell<Option<std::ops::Range<usize>>>>,
+    /// Map byte_offset → Widget built during render; used by select_from_tree().
+    offset_to_widget: Rc<RefCell<std::collections::HashMap<usize, Widget>>>,
+    /// Widget highlighted by a tree-panel selection (green outline).
+    tree_selected: Rc<RefCell<Option<Widget>>>,
 }
 
 impl Canvas {
@@ -144,6 +150,8 @@ impl Canvas {
             apply_btn,
             on_xml_error: Rc::new(RefCell::new(None)),
             selected_child_range: Rc::new(RefCell::new(None)),
+            offset_to_widget: Rc::new(RefCell::new(std::collections::HashMap::new())),
+            tree_selected: Rc::new(RefCell::new(None)),
         }
     }
 
@@ -206,6 +214,13 @@ impl Canvas {
             }
         };
 
+        // Clear the offset→widget map before rebuilding.
+        self.offset_to_widget.borrow_mut().clear();
+        // Also clear any stale tree-selection highlight.
+        if let Some(w) = self.tree_selected.borrow_mut().take() {
+            w.remove_css_class("tree-selected");
+        }
+
         // Build click context for cursor-jump-on-click
         let ctx = ClickCtx {
             buffer: self.source_buffer.clone(),
@@ -216,6 +231,7 @@ impl Canvas {
             merge_checked: self.merge_checked.clone(),
             apply_btn: self.apply_btn.clone(),
             selected_child_range: self.selected_child_range.clone(),
+            offset_to_widget: self.offset_to_widget.clone(),
         };
 
         // Find all top-level <object> nodes (may be wrapped in <interface>)
@@ -325,6 +341,19 @@ impl Canvas {
                 delete_child_range(buffer, &xml, &range);
             }
             *self.selected_child_range.borrow_mut() = None;
+        }
+    }
+
+    /// Highlight the canvas widget at `byte_offset` with a green tree-selection
+    /// outline.  Called when the user clicks a row in the Tree panel.
+    pub fn select_from_tree(&self, byte_offset: usize) {
+        // Remove previous tree-selection highlight.
+        if let Some(prev) = self.tree_selected.borrow_mut().take() {
+            prev.remove_css_class("tree-selected");
+        }
+        if let Some(w) = self.offset_to_widget.borrow().get(&byte_offset).cloned() {
+            w.add_css_class("tree-selected");
+            *self.tree_selected.borrow_mut() = Some(w);
         }
     }
 
@@ -567,6 +596,9 @@ fn collect_combobox_items(node: roxmltree::Node) -> Vec<String> {
 /// For GtkExpander, also toggles expanded state since we claim the click.
 /// On double-click, fires the codegen callback for interactive widgets.
 fn attach_click_to_select(widget: &Widget, byte_offset: usize, ctx: &ClickCtx, class: &str, id: &str, child_range: Option<std::ops::Range<usize>>) {
+    // Register this widget in the offset→widget map so the Tree panel can highlight it.
+    ctx.offset_to_widget.borrow_mut().insert(byte_offset, widget.clone());
+
     let gesture = GestureClick::new();
     gesture.set_button(1); // left click
     // Use BUBBLE phase so DragSource (which uses CAPTURE internally) gets first chance

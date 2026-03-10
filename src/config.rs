@@ -145,6 +145,12 @@ pub fn default_css() -> String {
     outline-offset: 2px;
     border-radius: 4px;
 }
+/* Tree-panel selection highlight — green outline */
+.tree-selected {
+    outline: 2px solid #2ec27e;
+    outline-offset: 1px;
+    border-radius: 4px;
+}
 /* Nerd Font icon labels — uses FiraCode Nerd Font for PUA glyph rendering */
 .nf {
     font-family: "FiraCode Nerd Font Mono", "FiraCode Nerd Font", monospace;

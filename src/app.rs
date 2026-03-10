@@ -454,6 +454,38 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         rebuild_mru_menus(&s.mru, &s.recent_files_menu, &s.recent_projects_menu);
     }
 
+    // Wire Tree panel row-click → green canvas highlight.
+    {
+        let canvas_ref = canvas.clone();
+        outline.on_row_select(move |byte_offset| {
+            canvas_ref.select_from_tree(byte_offset);
+        });
+    }
+
+    // Wire outline rebuild → toolbox selector combo.
+    {
+        let toolbox_ref = toolbox.clone();
+        outline.on_rebuild(move |items| {
+            toolbox_ref.populate_selector(items);
+        });
+    }
+
+    // Wire toolbox selector combo selection → green canvas highlight.
+    {
+        let canvas_ref = canvas.clone();
+        toolbox.on_select_widget(move |byte_offset| {
+            canvas_ref.select_from_tree(byte_offset);
+        });
+    }
+
+    // Wire toolbox selector trash button → delete widget from buffer.
+    {
+        let outline_ref = outline.clone();
+        toolbox.on_delete_widget(move |start, end| {
+            outline_ref.delete_child_bytes(start, end);
+        });
+    }
+
     // ── Connect notebook tab-switch → statusbar + minimap + canvas ──
     // Wire clickable error locations in the output panel
     {
