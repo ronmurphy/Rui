@@ -161,11 +161,15 @@ impl NotebookManager {
     }
 
     fn close_tab(&self, idx: usize) {
-        let mut tabs = self.tabs.borrow_mut();
-        if idx < tabs.len() {
+        // Remove from the Vec first, then from the GTK widget.
+        // Reversing the order would cause remove_page() to fire switch_page
+        // synchronously while borrow_mut() is still held → double-borrow panic.
+        {
+            let mut tabs = self.tabs.borrow_mut();
+            if idx >= tabs.len() { return; }
             tabs.remove(idx);
-            self.widget.remove_page(Some(idx as u32));
-        }
+        } // borrow_mut dropped before remove_page fires switch_page
+        self.widget.remove_page(Some(idx as u32));
     }
 
     fn refresh_label(&self, idx: usize) {

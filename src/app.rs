@@ -93,12 +93,12 @@ fn show_layout_dialog(
 
     let rows_label = Label::new(Some("Rows:"));
     let rows_spin  = SpinButton::with_range(1.0, 20.0, 1.0);
-    rows_spin.set_value(3.0);
+    rows_spin.set_value(7.0);
     rows_spin.set_width_chars(3);
 
     let cols_label = Label::new(Some("Columns:"));
     let cols_spin  = SpinButton::with_range(1.0, 20.0, 1.0);
-    cols_spin.set_value(4.0);
+    cols_spin.set_value(8.0);
     cols_spin.set_width_chars(3);
 
     dims.append(&rows_label);
@@ -106,6 +106,12 @@ fn show_layout_dialog(
     dims.append(&cols_label);
     dims.append(&cols_spin);
     outer.append(&dims);
+
+    let hint = Label::new(Some("Cells are numbered from 0 — 4 columns gives you columns 0 to 3."));
+    hint.set_wrap(true);
+    hint.set_xalign(0.0);
+    hint.add_css_class("dim-label");
+    outer.append(&hint);
 
     // Toggle dims sensitivity when radio changes
     {
@@ -157,6 +163,14 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
     let runner     = RunManager::new();
     let find_bar   = FindBar::new();
     let canvas     = Canvas::new();
+    canvas.init_merge_toolbar();
+    {
+        let out = output.clone();
+        canvas.on_xml_error(move |msg| {
+            out.append_run_error(&format!("[Canvas] {}", msg));
+            out.show_panel();
+        });
+    }
     let toolbox    = Toolbox::new();
     let outline    = OutlinePanel::new();
 

@@ -39,6 +39,12 @@ struct ClickCtx {
     on_double_click: DblClickCb,
     /// Currently selected widget — used to show/hide the selection outline.
     selected_widget: Rc<RefCell<Option<Widget>>>,
+    /// Whether merge mode is active (grid cells show checkboxes).
+    merge_mode: Rc<Cell<bool>>,
+    /// Which (col, row) cells are checked in merge mode.
+    merge_checked: Rc<RefCell<std::collections::HashSet<(i32, i32)>>>,
+    /// The Apply Merge button — updated for sensitivity as cells are checked.
+    apply_btn: Button,
 }
 
 /// The live preview panel shown beside the editor.
@@ -58,6 +64,16 @@ pub struct Canvas {
     source_buffer: Rc<RefCell<Option<sourceview5::Buffer>>>,
     /// Double-click callback: (class, id) → open/create companion file.
     on_double_click: DblClickCb,
+    /// Optional callback to log XML errors somewhere visible (e.g. output panel).
+    on_xml_error: Rc<RefCell<Option<Box<dyn Fn(&str)>>>>,
+    /// Whether merge mode is currently active.
+    merge_mode: Rc<Cell<bool>>,
+    /// Cells checked for merging: (col, row).
+    merge_checked: Rc<RefCell<std::collections::HashSet<(i32, i32)>>>,
+    /// The toggle button for merge mode (stored so init_merge_toolbar can wire it).
+    merge_btn: ToggleButton,
+    /// The apply button (stored to update sensitivity and reset state).
+    apply_btn: Button,
 }
 
 impl Canvas {
@@ -83,10 +99,29 @@ impl Canvas {
             .child(&container)
             .build();
 
+        // ── Merge-mode toolbar ──────────────────────────────────────
+        let merge_toolbar = GtkBox::new(Orientation::Horizontal, 6);
+        merge_toolbar.set_margin_start(6);
+        merge_toolbar.set_margin_end(6);
+        merge_toolbar.set_margin_top(4);
+        merge_toolbar.set_margin_bottom(2);
+
+        let merge_btn = ToggleButton::with_label("Merge Cells");
+        let apply_btn = Button::with_label("Apply Merge");
+        apply_btn.add_css_class("suggested-action");
+        apply_btn.set_sensitive(false);
+        merge_toolbar.append(&merge_btn);
+        merge_toolbar.append(&apply_btn);
+
+        let merge_mode    = Rc::new(Cell::new(false));
+        let merge_checked = Rc::new(RefCell::new(std::collections::HashSet::new()));
+        // ──────────────────────────────────────────────────────────────
+
         let widget = GtkBox::new(Orientation::Vertical, 0);
         widget.set_hexpand(true);
         widget.set_vexpand(true);
         widget.append(&status);
+        widget.append(&merge_toolbar);
         widget.append(&scroll);
 
         Canvas {
@@ -97,7 +132,41 @@ impl Canvas {
             generation: Rc::new(Cell::new(0)),
             source_buffer: Rc::new(RefCell::new(None)),
             on_double_click: Rc::new(RefCell::new(None)),
+            merge_mode,
+            merge_checked,
+            merge_btn,
+            apply_btn,
+            on_xml_error: Rc::new(RefCell::new(None)),
         }
+    }
+
+    /// Register a callback that receives XML error messages.
+    /// Use this to pipe errors to the output panel so they're copyable.
+    pub fn on_xml_error<F: Fn(&str) + 'static>(&self, cb: F) {
+        *self.on_xml_error.borrow_mut() = Some(Box::new(cb));
+    }
+
+    /// Wire up the merge toolbar buttons.  Must be called once after Canvas::new().
+    pub fn init_merge_toolbar(&self) {
+        // Toggle button: enter / exit merge mode and re-render
+        let canvas = self.clone();
+        let apply_ref = self.apply_btn.clone();
+        self.merge_btn.connect_toggled(move |btn| {
+            canvas.merge_mode.set(btn.is_active());
+            canvas.merge_checked.borrow_mut().clear();
+            apply_ref.set_sensitive(false);
+            if let Some(b) = canvas.source_buffer.borrow().as_ref() {
+                let (start, end) = b.bounds();
+                let xml = b.text(&start, &end, false).to_string();
+                canvas.render(&xml);
+            }
+        });
+
+        // Apply button: perform the merge and exit merge mode
+        let canvas2 = self.clone();
+        self.apply_btn.connect_clicked(move |_| {
+            apply_merge(&canvas2);
+        });
     }
 
     /// Render a .ui XML string into the preview pane using roxmltree.
@@ -118,9 +187,14 @@ impl Canvas {
         let doc = match roxmltree::Document::parse(xml) {
             Ok(d) => d,
             Err(e) => {
-                self.status.set_text(&format!("XML error: {}", e));
+                let msg = format!("XML error: {}", e);
+                self.status.set_text(&msg);
                 self.status.set_visible(true);
                 self.status.set_vexpand(true);
+                // Also send to the output panel if a callback is registered
+                if let Some(cb) = self.on_xml_error.borrow().as_ref() {
+                    cb(&msg);
+                }
                 return;
             }
         };
@@ -131,6 +205,9 @@ impl Canvas {
             xml: Rc::new(xml.to_owned()),
             on_double_click: self.on_double_click.clone(),
             selected_widget: Rc::new(RefCell::new(None)),
+            merge_mode: self.merge_mode.clone(),
+            merge_checked: self.merge_checked.clone(),
+            apply_btn: self.apply_btn.clone(),
         };
 
         // Find all top-level <object> nodes (may be wrapped in <interface>)
@@ -715,15 +792,17 @@ fn build_widget(node: roxmltree::Node, ctx: &ClickCtx) -> Option<Widget> {
             if let Some(v) = prop_val(&props, "column-spacing") {
                 if let Ok(n) = v.trim().parse::<u32>() { g.set_column_spacing(n); }
             }
-            if let Some(v) = prop_val(&props, "row-homogeneous") {
-                g.set_row_homogeneous(parse_bool(v));
-            }
-            if let Some(v) = prop_val(&props, "column-homogeneous") {
-                g.set_column_homogeneous(parse_bool(v));
-            }
+            // Force homogeneous rows/columns in the canvas so all cells stay
+            // the same size regardless of content or spans.
+            let rh = prop_val(&props, "row-homogeneous").map(parse_bool).unwrap_or(true);
+            let ch = prop_val(&props, "column-homogeneous").map(parse_bool).unwrap_or(true);
+            g.set_row_homogeneous(rh);
+            g.set_column_homogeneous(ch);
             apply_common_props(&g, &props);
 
-            // Collect child nodes with their <layout> properties and byte ranges
+            // Collect child nodes with their <layout> properties and byte ranges.
+            // is_merged=true marks cells inserted by the Merge Cells tool so we
+            // can render them with a visible Frame outline instead of the raw widget.
             let child_nodes: Vec<_> = node
                 .children()
                 .filter(|n| n.is_element() && n.tag_name().name() == "child")
@@ -732,42 +811,51 @@ fn build_widget(node: roxmltree::Node, ctx: &ClickCtx) -> Option<Widget> {
                     let obj = child_node
                         .children()
                         .find(|n| n.is_element() && n.tag_name().name() == "object")?;
+                    let obj_props = collect_properties(obj);
+                    let is_merged = prop_val(&obj_props, "rui-merged").map(parse_bool).unwrap_or(false);
+                    let height_req = prop_val(&obj_props, "height-request")
+                        .and_then(|v| v.trim().parse::<i32>().ok());
                     let widget = build_widget(obj, ctx)?;
                     let layout = collect_layout_props(obj);
-                    Some((widget, layout, child_range))
+                    Some((widget, layout, child_range, is_merged, height_req))
                 })
                 .collect();
 
-            if child_nodes.is_empty() {
-                // No children — show placeholder grid so the user has somewhere
-                // to drop widgets.  Use rui-rows/rui-columns if present.
-                let n_rows = prop_val(&props, "rui-rows")
-                    .or_else(|| prop_val(&props, "n-rows"))
-                    .and_then(|v| v.trim().parse::<i32>().ok())
-                    .unwrap_or(2);
-                let n_cols = prop_val(&props, "rui-columns")
-                    .or_else(|| prop_val(&props, "n-columns"))
-                    .and_then(|v| v.trim().parse::<i32>().ok())
-                    .unwrap_or(2);
-                for r in 0..n_rows {
-                    for c in 0..n_cols {
-                        let lbl = Label::new(Some(&format!("{},{}", r, c)));
-                        lbl.add_css_class("dim-label");
-                        lbl.set_hexpand(true);
-                        lbl.set_vexpand(true);
-                        g.attach(&lbl, c, r, 1, 1);
-                    }
-                }
-            } else {
+            {
                 // Attach children using layout properties or auto-stack
                 let mut auto_row = 0i32;
                 let mut occupied = std::collections::HashSet::<(i32, i32)>::new();
-                for (child, layout, child_range) in &child_nodes {
+                for (child, layout, child_range, is_merged, height_req) in &child_nodes {
                     let col = layout.column.unwrap_or(0);
                     let row = layout.row.unwrap_or(auto_row);
                     let col_span = layout.column_span.unwrap_or(1);
                     let row_span = layout.row_span.unwrap_or(1);
-                    g.attach(child, col, row, col_span, row_span);
+
+                    // Merged-cell placeholders get a visible Frame outline so they
+                    // look the same as empty-cell placeholders.
+                    // For merged cells we wrap the placeholder in a Frame for the
+                    // visible border, but keep a reference to the *inner* widget
+                    // so the DropTarget lands on the widget actually under the
+                    // cursor (GTK4 DropTarget events don't reliably bubble from
+                    // child → parent the way pointer events do).
+                    let (attach_widget, drop_widget): (Widget, Widget) = if *is_merged {
+                        let f = Frame::new(None);
+                        f.set_hexpand(true);
+                        f.set_vexpand(true);
+                        f.set_size_request(60, 36);
+                        if let Some(h) = height_req {
+                            f.set_height_request(*h);
+                        }
+                        let span_lbl = Label::new(Some(&format!("{}×{}", col_span, row_span)));
+                        span_lbl.add_css_class("dim-label");
+                        f.set_child(Some(&span_lbl));
+                        (f.upcast::<Widget>(), span_lbl.upcast::<Widget>())
+                    } else {
+                        let w = child.clone();
+                        (w.clone(), w)
+                    };
+
+                    g.attach(&attach_widget, col, row, col_span, row_span);
                     auto_row = row + row_span;
 
                     // Right-click → grid layout editor popover
@@ -775,11 +863,13 @@ fn build_widget(node: roxmltree::Node, ctx: &ClickCtx) -> Option<Widget> {
                     rc_gesture.set_button(3);
                     let buf_ref = ctx.buffer.clone();
                     let xml_rc = ctx.xml.clone();
-                    let child_for_pop = child.clone();
+                    let child_for_pop = attach_widget.clone();
                     let init_col = col;
                     let init_row = row;
                     let init_cs = col_span;
                     let init_rs = row_span;
+                    let init_height = height_req.unwrap_or(0);
+                    let merged_flag = *is_merged;
                     let range = child_range.clone();
 
                     rc_gesture.connect_pressed(move |gesture, _, _, _| {
@@ -797,7 +887,7 @@ fn build_widget(node: roxmltree::Node, ctx: &ClickCtx) -> Option<Widget> {
                             let lbl = Label::new(Some(label_text));
                             lbl.set_width_chars(10);
                             lbl.set_halign(gtk4::Align::Start);
-                            let adj = Adjustment::new(init as f64, 0.0, 99.0, 1.0, 5.0, 0.0);
+                            let adj = Adjustment::new(init as f64, 0.0, 4096.0, 1.0, 10.0, 0.0);
                             let spin = SpinButton::new(Some(&adj), 1.0, 0);
                             spin.set_width_chars(4);
                             row_box.append(&lbl);
@@ -805,15 +895,27 @@ fn build_widget(node: roxmltree::Node, ctx: &ClickCtx) -> Option<Widget> {
                             (row_box, spin)
                         };
 
-                        let (col_row_w, col_spin) = make_spin("Column:", init_col);
-                        let (row_row_w, row_spin) = make_spin("Row:", init_row);
-                        let (cs_row_w, cs_spin) = make_spin("Col span:", init_cs);
-                        let (rs_row_w, rs_spin) = make_spin("Row span:", init_rs);
-
-                        pop_vbox.append(&col_row_w);
-                        pop_vbox.append(&row_row_w);
-                        pop_vbox.append(&cs_row_w);
-                        pop_vbox.append(&rs_row_w);
+                        // Layout spinners — only shown for non-merged cells.
+                        // Height spinner — only shown for merged cells.
+                        let layout_spins: Option<(SpinButton, SpinButton, SpinButton, SpinButton)>;
+                        let height_spin: Option<SpinButton>;
+                        if merged_flag {
+                            layout_spins = None;
+                            let (h_row_w, h_spin) = make_spin("Height (px):", init_height);
+                            pop_vbox.append(&h_row_w);
+                            height_spin = Some(h_spin);
+                        } else {
+                            height_spin = None;
+                            let (col_row_w, col_spin) = make_spin("Column:", init_col);
+                            let (row_row_w, row_spin) = make_spin("Row:", init_row);
+                            let (cs_row_w, cs_spin)   = make_spin("Col span:", init_cs);
+                            let (rs_row_w, rs_spin)   = make_spin("Row span:", init_rs);
+                            pop_vbox.append(&col_row_w);
+                            pop_vbox.append(&row_row_w);
+                            pop_vbox.append(&cs_row_w);
+                            pop_vbox.append(&rs_row_w);
+                            layout_spins = Some((col_spin, row_spin, cs_spin, rs_spin));
+                        }
 
                         let btn_box = GtkBox::new(Orientation::Horizontal, 4);
                         btn_box.set_margin_top(4);
@@ -830,26 +932,30 @@ fn build_widget(node: roxmltree::Node, ctx: &ClickCtx) -> Option<Widget> {
                         popover.set_parent(&child_for_pop);
                         popover.set_autohide(true);
 
-                        // Apply layout changes
+                        // Apply: layout update for normal cells, height-request for merged
                         {
                             let buf = buf_ref.clone();
                             let xml = xml_rc.clone();
                             let r = range.clone();
-                            let col_s = col_spin.clone();
-                            let row_s = row_spin.clone();
-                            let cs_s = cs_spin.clone();
-                            let rs_s = rs_spin.clone();
+                            let ls = layout_spins.clone();
+                            let hs = height_spin.clone();
                             let pop = popover.clone();
                             apply_btn.connect_clicked(move |_| {
                                 pop.popdown();
                                 if let Some(b) = buf.borrow().as_ref() {
-                                    update_grid_child_layout(
-                                        b, &xml, &r,
-                                        col_s.value() as i32,
-                                        row_s.value() as i32,
-                                        cs_s.value() as i32,
-                                        rs_s.value() as i32,
-                                    );
+                                    if let Some(ref hs) = hs {
+                                        let h = hs.value() as i32;
+                                        set_child_height_request(b, &xml, &r, h);
+                                    }
+                                    if let Some((ref col_s, ref row_s, ref cs_s, ref rs_s)) = ls {
+                                        update_grid_child_layout(
+                                            b, &xml, &r,
+                                            col_s.value() as i32,
+                                            row_s.value() as i32,
+                                            cs_s.value() as i32,
+                                            rs_s.value() as i32,
+                                        );
+                                    }
                                 }
                             });
                         }
@@ -875,7 +981,7 @@ fn build_widget(node: roxmltree::Node, ctx: &ClickCtx) -> Option<Widget> {
 
                         popover.popup();
                     });
-                    child.add_controller(rc_gesture);
+                    attach_widget.add_controller(rc_gesture);
 
                     // Mark every cell covered by this widget
                     for dr in 0..row_span {
@@ -884,30 +990,48 @@ fn build_widget(node: roxmltree::Node, ctx: &ClickCtx) -> Option<Widget> {
                         }
                     }
 
-                    // Drop target on occupied cell — move dragged widget here
+                    // Drop target: move the dragged widget here.
+                    // Merged-cell placeholders also accept drops — the dropped
+                    // widget lands at the merged cell's top-left corner (span 1×1)
+                    // and the placeholder is removed so they don't overlap.
                     {
                         let drop_tgt = DropTarget::new(
                             String::static_type(),
                             gtk4::gdk::DragAction::MOVE,
                         );
-                        let dt_buf = ctx.buffer.clone();
-                        let dt_xml = ctx.xml.clone();
-                        let dt_col = col;
-                        let dt_row = row;
-                        let dt_cs  = col_span;
-                        let dt_rs  = row_span;
+                        let dt_buf    = ctx.buffer.clone();
+                        let dt_xml    = ctx.xml.clone();
+                        let dt_col    = col;
+                        let dt_row    = row;
+                        // Widget dropped here inherits this cell's full span.
+                        let (dt_cs, dt_rs) = (col_span, row_span);
+                        let is_merged_tgt = merged_flag;
+                        let merged_range  = child_range.clone();
                         drop_tgt.connect_drop(move |_, val, _x, _y| {
                             if let Ok(s) = val.get::<String>() {
                                 if let Some((src_start, src_end)) = parse_child_range_payload(&s) {
                                     let src_range = src_start..src_end;
                                     if let Some(b) = dt_buf.borrow().as_ref() {
-                                        update_grid_child_layout(b, &dt_xml, &src_range, dt_col, dt_row, dt_cs, dt_rs);
+                                        if is_merged_tgt {
+                                            // Move the widget first (uses original xml/ranges).
+                                            update_grid_child_layout(b, &dt_xml, &src_range, dt_col, dt_row, dt_cs, dt_rs);
+                                            // Re-read buffer and find the placeholder by its
+                                            // deterministic ID so byte-range shifts don't matter.
+                                            let (s2, e2) = b.bounds();
+                                            let xml2 = b.text(&s2, &e2, false).to_string();
+                                            let pid = format!("merged_c{}_r{}", dt_col, dt_row);
+                                            if let Some(r2) = find_child_range_by_id(&xml2, &pid) {
+                                                delete_child_range(b, &xml2, &r2);
+                                            }
+                                        } else {
+                                            update_grid_child_layout(b, &dt_xml, &src_range, dt_col, dt_row, dt_cs, dt_rs);
+                                        }
                                     }
                                 }
                             }
                             true
                         });
-                        child.add_controller(drop_tgt);
+                        drop_widget.add_controller(drop_tgt);
                     }
                 }
 
@@ -921,10 +1045,10 @@ fn build_widget(node: roxmltree::Node, ctx: &ClickCtx) -> Option<Widget> {
                     .and_then(|v| v.trim().parse::<i32>().ok());
 
                 let content_max_col = child_nodes.iter()
-                    .map(|(_, l, _)| l.column.unwrap_or(0) + l.column_span.unwrap_or(1))
+                    .map(|(_, l, _, _, _)| l.column.unwrap_or(0) + l.column_span.unwrap_or(1))
                     .max().unwrap_or(0);
                 let content_max_row = child_nodes.iter()
-                    .map(|(_, l, _)| l.row.unwrap_or(0) + l.row_span.unwrap_or(1))
+                    .map(|(_, l, _, _, _)| l.row.unwrap_or(0) + l.row_span.unwrap_or(1))
                     .max().unwrap_or(0);
 
                 // Use rui- dimensions as the floor; content may exceed them
@@ -963,7 +1087,35 @@ fn build_widget(node: roxmltree::Node, ctx: &ClickCtx) -> Option<Widget> {
                             });
                             ph.add_controller(drop_tgt);
 
-                            g.attach(&ph, gc, gr, 1, 1);
+                            if ctx.merge_mode.get() {
+                                // Merge mode: overlay a CheckButton on the cell
+                                let overlay = Overlay::new();
+                                overlay.set_child(Some(&ph));
+
+                                let cb = CheckButton::new();
+                                cb.set_halign(gtk4::Align::Start);
+                                cb.set_valign(gtk4::Align::Start);
+                                cb.set_margin_start(4);
+                                cb.set_margin_top(4);
+                                // Restore checked state across re-renders
+                                if ctx.merge_checked.borrow().contains(&(gc, gr)) {
+                                    cb.set_active(true);
+                                }
+                                let mc = ctx.merge_checked.clone();
+                                let ab = ctx.apply_btn.clone();
+                                cb.connect_toggled(move |btn| {
+                                    if btn.is_active() {
+                                        mc.borrow_mut().insert((gc, gr));
+                                    } else {
+                                        mc.borrow_mut().remove(&(gc, gr));
+                                    }
+                                    ab.set_sensitive(mc.borrow().len() >= 2);
+                                });
+                                overlay.add_overlay(&cb);
+                                g.attach(&overlay, gc, gr, 1, 1);
+                            } else {
+                                g.attach(&ph, gc, gr, 1, 1);
+                            }
                         }
                     }
                 }
@@ -1746,6 +1898,16 @@ fn find_obj_close(s: &str) -> Option<usize> {
     None
 }
 
+/// Find the `<child>` block that contains an `<object id="…">` with the given id.
+fn find_child_range_by_id(xml: &str, id: &str) -> Option<std::ops::Range<usize>> {
+    let doc = roxmltree::Document::parse(xml).ok()?;
+    let obj_node = doc.descendants()
+        .find(|n| n.is_element() && n.attribute("id") == Some(id))?;
+    let child_node = obj_node.parent()
+        .filter(|p| p.is_element() && p.tag_name().name() == "child")?;
+    Some(child_node.range())
+}
+
 /// Delete a `<child>…</child>` block from the source buffer.
 /// Also removes the preceding indentation whitespace and the trailing newline.
 fn delete_child_range(buffer: &sourceview5::Buffer, xml: &str, range: &std::ops::Range<usize>) {
@@ -1766,6 +1928,73 @@ fn delete_child_range(buffer: &sourceview5::Buffer, xml: &str, range: &std::ops:
     let mut ei = buffer.iter_at_offset(char_end as i32);
     buffer.begin_user_action();
     buffer.delete(&mut si, &mut ei);
+    buffer.end_user_action();
+}
+
+/// Set (or replace) the `height-request` property on the `<object>` inside a
+/// `<child>` range.  A value of 0 removes the property so GTK uses natural size.
+///
+/// Builds the entire new child-block string in memory then replaces the whole
+/// `child_range` slice in the buffer — avoids any byte-offset arithmetic issues.
+fn set_child_height_request(
+    buffer: &sourceview5::Buffer,
+    xml: &str,
+    child_range: &std::ops::Range<usize>,
+    height: i32,
+) {
+    if child_range.end > xml.len() {
+        return;
+    }
+    let old_block = &xml[child_range.clone()];
+
+    const PROP: &str = "<property name=\"height-request\">";
+
+    let new_block: String = if let Some(ps) = old_block.find(PROP) {
+        // Existing height-request property — replace value or remove line
+        let val_start = ps + PROP.len();
+        let val_len = old_block[val_start..].find("</property>").unwrap_or(0);
+        if height > 0 {
+            // Replace value in-place
+            format!("{}{}{}", &old_block[..val_start], height, &old_block[val_start + val_len..])
+        } else {
+            // Remove the entire property line (including leading newline+indent)
+            let line_start = old_block[..ps].rfind('\n').map(|i| i + 1).unwrap_or(ps);
+            let prop_end = val_start + val_len + "</property>".len();
+            let line_end = if prop_end < old_block.len() && old_block.as_bytes()[prop_end] == b'\n' {
+                prop_end + 1
+            } else {
+                prop_end
+            };
+            format!("{}{}", &old_block[..line_start], &old_block[line_end..])
+        }
+    } else if height > 0 {
+        // No existing property — insert one before the closing </object>.
+        // Use rfind so we target the innermost (label's) </object>, not a
+        // parent container's tag.
+        let close_pos = match old_block.rfind("</object>") {
+            Some(p) => p,
+            None => return,
+        };
+        // Infer indentation from the <object tag's leading whitespace.
+        let obj_pos = old_block.find("<object").unwrap_or(0);
+        let obj_line_start = old_block[..obj_pos].rfind('\n').map(|i| i + 1).unwrap_or(0);
+        let obj_indent: String = old_block[obj_line_start..obj_pos]
+            .chars().take_while(|c| c.is_whitespace()).collect();
+        let prop_indent = format!("{}  ", obj_indent);
+        let insertion = format!("\n{}{}{}</property>", prop_indent, PROP, height);
+        format!("{}{}{}", &old_block[..close_pos], insertion, &old_block[close_pos..])
+    } else {
+        return; // height == 0 and no existing property: nothing to do
+    };
+
+    // Replace the whole child block in the buffer
+    let char_start = xml[..child_range.start].chars().count();
+    let char_end   = xml[..child_range.end  ].chars().count();
+    let mut si = buffer.iter_at_offset(char_start as i32);
+    let mut ei = buffer.iter_at_offset(char_end   as i32);
+    buffer.begin_user_action();
+    buffer.delete(&mut si, &mut ei);
+    buffer.insert(&mut si, new_block.as_str());
     buffer.end_user_action();
 }
 
@@ -1855,4 +2084,98 @@ fn parse_child_range_payload(s: &str) -> Option<(usize, usize)> {
     let start = parts.next()?.parse::<usize>().ok()?;
     let end   = parts.next()?.parse::<usize>().ok()?;
     Some((start, end))
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Merge-mode apply
+// ─────────────────────────────────────────────────────────────────────
+
+/// Apply the current merge selection: compute the bounding rectangle of
+/// all checked cells, validate that every cell in that rectangle is
+/// checked (no gaps or diagonal selections), then insert a spanning
+/// GtkLabel placeholder into the XML and exit merge mode.
+fn apply_merge(canvas: &Canvas) {
+    let checked: Vec<(i32, i32)> = canvas.merge_checked.borrow().iter().copied().collect();
+    if checked.len() < 2 {
+        return;
+    }
+
+    let min_col = checked.iter().map(|(c, _)| *c).min().unwrap();
+    let max_col = checked.iter().map(|(c, _)| *c).max().unwrap();
+    let min_row = checked.iter().map(|(_, r)| *r).min().unwrap();
+    let max_row = checked.iter().map(|(_, r)| *r).max().unwrap();
+    let col_span = max_col - min_col + 1;
+    let row_span = max_row - min_row + 1;
+
+    // Validate: every cell in the bounding box must be selected
+    for r in min_row..=max_row {
+        for c in min_col..=max_col {
+            if !canvas.merge_checked.borrow().contains(&(c, r)) {
+                // Non-rectangular or gapped selection — silently bail
+                return;
+            }
+        }
+    }
+
+    // Compute the insertion point and perform the XML edit inside a block
+    // so the borrow on source_buffer is DROPPED before we call set_active()
+    // below.  If the borrow were still live, the connect_toggled callback
+    // (fired synchronously by set_active) would try to borrow the same
+    // RefCell and panic.
+    {
+        let buffer_ref = canvas.source_buffer.borrow();
+        let b = match buffer_ref.as_ref() {
+            Some(b) => b,
+            None => return,
+        };
+
+        let (start, end) = b.bounds();
+        let xml = b.text(&start, &end, false).to_string();
+
+        let doc = match roxmltree::Document::parse(&xml) {
+            Ok(d) => d,
+            Err(_) => return,
+        };
+
+        let grid_node = match doc.descendants()
+            .find(|n| n.is_element() && n.attribute("class") == Some("GtkGrid"))
+        {
+            Some(n) => n,
+            None => return,
+        };
+
+        // Insert just before the grid's closing </object> tag.
+        let grid_range_end = grid_node.range().end;
+        let insert_byte = match xml[..grid_range_end].rfind("</object>") {
+            Some(pos) => pos,
+            None => return,
+        };
+
+        let id = format!("merged_c{}_r{}", min_col, min_row);
+        let new_child = format!(
+            "\n    <child>\n      <object class=\"GtkLabel\" id=\"{id}\">\
+\n        <property name=\"label\"></property>\
+\n        <property name=\"rui-merged\">true</property>\
+\n        <layout>\
+\n          <property name=\"column\">{min_col}</property>\
+\n          <property name=\"row\">{min_row}</property>\
+\n          <property name=\"column-span\">{col_span}</property>\
+\n          <property name=\"row-span\">{row_span}</property>\
+\n        </layout>\
+\n      </object>\
+\n    </child>"
+        );
+
+        let char_pos = xml[..insert_byte].chars().count();
+        let mut iter = b.iter_at_offset(char_pos as i32);
+        b.begin_user_action();
+        b.insert(&mut iter, &new_child);
+        b.end_user_action();
+    } // ← buffer_ref dropped here; borrow is released
+
+    // Safe to trigger toggle now — connect_toggled can borrow source_buffer
+    canvas.merge_mode.set(false);
+    canvas.merge_btn.set_active(false);
+    canvas.merge_checked.borrow_mut().clear();
+    canvas.apply_btn.set_sensitive(false);
 }
