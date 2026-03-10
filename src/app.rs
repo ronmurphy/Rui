@@ -1,8 +1,8 @@
 use sourceview5::{prelude::*, Map};
 use gtk4::{
     Align, Application, ApplicationWindow, Box as GtkBox, Button, CheckButton,
-    FileDialog, Label, Notebook as GtkNotebook, Orientation, Paned, SpinButton,
-    Window,
+    FileDialog, Frame, Label, ListBox, Notebook as GtkNotebook, Orientation,
+    Paned, ScrolledWindow, SelectionMode, SpinButton, Window,
 };
 use crate::config::EditorConfig;
 use std::cell::RefCell;
@@ -62,10 +62,10 @@ struct AppState {
 }
 
 /// Show the "New .ui File" layout dialog.
-/// Calls `on_confirm(use_grid, rows, cols)` when the user clicks Create.
+/// Calls `on_confirm(xml)` with the ready-to-use .ui XML when the user clicks Create.
 fn show_layout_dialog(
     parent: &ApplicationWindow,
-    on_confirm: impl Fn(bool, i32, i32) + 'static,
+    on_confirm: impl Fn(String) + 'static,
 ) {
     let dialog = Window::builder()
         .title("New .ui File")
@@ -73,7 +73,7 @@ fn show_layout_dialog(
         .transient_for(parent)
         .destroy_with_parent(true)
         .resizable(false)
-        .default_width(320)
+        .default_width(380)
         .build();
 
     let outer = GtkBox::new(Orientation::Vertical, 16);
@@ -116,11 +116,49 @@ fn show_layout_dialog(
     hint.add_css_class("dim-label");
     outer.append(&hint);
 
-    // Toggle dims sensitivity when radio changes
+    // ── Template picker (grid only) ──
+    let tmpl_frame = Frame::new(Some("Template"));
+    tmpl_frame.set_margin_top(4);
+
+    let tmpl_list = ListBox::new();
+    tmpl_list.set_selection_mode(SelectionMode::Single);
+
+    for tmpl in crate::templates::TEMPLATES {
+        let row_box = GtkBox::new(Orientation::Vertical, 2);
+        row_box.set_margin_start(8);
+        row_box.set_margin_end(8);
+        row_box.set_margin_top(6);
+        row_box.set_margin_bottom(6);
+        let name_lbl = Label::new(Some(tmpl.label));
+        name_lbl.set_xalign(0.0);
+        let desc_lbl = Label::new(Some(tmpl.description));
+        desc_lbl.set_xalign(0.0);
+        desc_lbl.add_css_class("dim-label");
+        desc_lbl.set_wrap(true);
+        row_box.append(&name_lbl);
+        row_box.append(&desc_lbl);
+        // Store template id in widget name so we can retrieve it on confirm
+        row_box.set_widget_name(tmpl.id);
+        tmpl_list.append(&row_box);
+    }
+    // Select first row (Blank) by default
+    if let Some(first_row) = tmpl_list.row_at_index(0) {
+        tmpl_list.select_row(Some(&first_row));
+    }
+
+    let tmpl_scroll = ScrolledWindow::new();
+    tmpl_scroll.set_min_content_height(160);
+    tmpl_scroll.set_child(Some(&tmpl_list));
+    tmpl_frame.set_child(Some(&tmpl_scroll));
+    outer.append(&tmpl_frame);
+
+    // Toggle dims + template sensitivity when radio changes
     {
-        let dims_ref = dims.clone();
+        let dims_ref   = dims.clone();
+        let tmpl_ref   = tmpl_frame.clone();
         grid_radio.connect_toggled(move |btn| {
             dims_ref.set_sensitive(btn.is_active());
+            tmpl_ref.set_sensitive(btn.is_active());
         });
     }
 
@@ -148,8 +186,20 @@ fn show_layout_dialog(
             let use_grid = grid_radio.is_active();
             let rows = rows_spin.value() as i32;
             let cols = cols_spin.value() as i32;
+
+            let xml = if use_grid {
+                // Find selected template id from the list
+                let tmpl_id = tmpl_list
+                    .selected_row()
+                    .and_then(|row| row.child())
+                    .map(|w| w.widget_name().to_string())
+                    .unwrap_or_else(|| "blank".into());
+                crate::templates::apply(&tmpl_id, rows, cols)
+            } else {
+                crate::codegen::make_box_template()
+            };
             d.close();
-            on_confirm(use_grid, rows, cols);
+            on_confirm(xml);
         });
     }
 
@@ -466,12 +516,7 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         let win = window.clone();
         menubar::connect_action(app, "new-ui", move || {
             let st2 = st.clone();
-            show_layout_dialog(&win, move |use_grid, rows, cols| {
-                let template = if use_grid {
-                    crate::codegen::make_grid_template(rows, cols)
-                } else {
-                    crate::codegen::make_box_template()
-                };
+            show_layout_dialog(&win, move |template| {
                 let s = st2.borrow();
                 s.notebook.new_tab(&s.cfg);
                 if let Some(tab) = s.notebook.current_tab() {
@@ -515,13 +560,7 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
 
                         // Show layout dialog before scaffolding
                         let st3 = st2.clone();
-                        show_layout_dialog(&win2, move |use_grid, rows, cols| {
-                            let ui = if use_grid {
-                                crate::codegen::make_grid_template(rows, cols)
-                            } else {
-                                crate::codegen::make_box_template()
-                            };
-
+                        show_layout_dialog(&win2, move |ui| {
                             if let Err(e) = crate::codegen::scaffold_project(&dir, &project_name, &ui) {
                                 log::error!("Failed to scaffold project: {}", e);
                                 return;

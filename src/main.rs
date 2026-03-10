@@ -26,6 +26,7 @@ mod outline;
 mod palette;
 mod inspector;
 mod toolbox;
+mod templates;
 
 #[cfg(feature = "preview")]
 mod preview;
