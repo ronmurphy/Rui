@@ -30,7 +30,7 @@ const CATEGORIES: &[Category] = &[
         widgets: &[
             WidgetEntry {
                 name: "Box (Vertical)",
-                icon: "⬇",
+                icon: "\u{F063}",  // nf-fa-arrow_down
                 snippet: r#"<object class="GtkBox">
   <property name="orientation">vertical</property>
   <property name="spacing">8</property>
@@ -41,7 +41,7 @@ const CATEGORIES: &[Category] = &[
             },
             WidgetEntry {
                 name: "Box (Horizontal)",
-                icon: "➡",
+                icon: "\u{F061}",  // nf-fa-arrow_right
                 snippet: r#"<object class="GtkBox">
   <property name="orientation">horizontal</property>
   <property name="spacing">8</property>
@@ -52,7 +52,7 @@ const CATEGORIES: &[Category] = &[
             },
             WidgetEntry {
                 name: "Grid",
-                icon: "▦",
+                icon: "\u{F00A}",  // nf-fa-th
                 snippet: r#"<object class="GtkGrid">
   <property name="row-spacing">8</property>
   <property name="column-spacing">8</property>
@@ -69,7 +69,7 @@ const CATEGORIES: &[Category] = &[
             },
             WidgetEntry {
                 name: "Frame",
-                icon: "▢",
+                icon: "\u{F2D2}",  // nf-fa-window_maximize
                 snippet: r#"<object class="GtkFrame">
   <property name="label">Frame Title</property>
   <child>
@@ -79,7 +79,7 @@ const CATEGORIES: &[Category] = &[
             },
             WidgetEntry {
                 name: "ScrolledWindow",
-                icon: "↕",
+                icon: "\u{F07D}",  // nf-fa-arrows_v
                 snippet: r#"<object class="GtkScrolledWindow">
   <property name="hexpand">true</property>
   <property name="vexpand">true</property>
@@ -90,7 +90,7 @@ const CATEGORIES: &[Category] = &[
             },
             WidgetEntry {
                 name: "Stack",
-                icon: "⧉",
+                icon: "\u{F24D}",  // nf-fa-clone
                 snippet: r#"<object class="GtkStack" id="my_stack">
   <child>
     <object class="GtkStackPage">
@@ -107,7 +107,7 @@ const CATEGORIES: &[Category] = &[
             },
             WidgetEntry {
                 name: "Notebook",
-                icon: "📑",
+                icon: "\u{F2BB}",  // nf-oct-browser (tabbed view)
                 snippet: r#"<object class="GtkNotebook">
   <child>
     <object class="GtkNotebookPage">
@@ -123,7 +123,7 @@ const CATEGORIES: &[Category] = &[
             },
             WidgetEntry {
                 name: "Paned (Horizontal)",
-                icon: "⬌",
+                icon: "\u{F07E}",  // nf-fa-arrows_h
                 snippet: r#"<object class="GtkPaned">
   <property name="orientation">horizontal</property>
   <child>
@@ -145,7 +145,7 @@ const CATEGORIES: &[Category] = &[
         widgets: &[
             WidgetEntry {
                 name: "Label",
-                icon: "𝐓",
+                icon: "\u{F031}",  // nf-fa-font
                 snippet: r#"<object class="GtkLabel">
   <property name="label">Label text</property>
   <property name="halign">start</property>
@@ -153,7 +153,7 @@ const CATEGORIES: &[Category] = &[
             },
             WidgetEntry {
                 name: "Image",
-                icon: "🖼",
+                icon: "\u{F03E}",  // nf-fa-picture_o
                 snippet: r#"<object class="GtkImage">
   <property name="icon-name">image-x-generic</property>
   <property name="pixel-size">48</property>
@@ -161,14 +161,14 @@ const CATEGORIES: &[Category] = &[
             },
             WidgetEntry {
                 name: "Separator",
-                icon: "—",
+                icon: "\u{F068}",  // nf-fa-minus (horizontal rule)
                 snippet: r#"<object class="GtkSeparator">
   <property name="orientation">horizontal</property>
 </object>"#,
             },
             WidgetEntry {
                 name: "ProgressBar",
-                icon: "▰",
+                icon: "\u{F242}",  // nf-fa-battery_half
                 snippet: r#"<object class="GtkProgressBar">
   <property name="fraction">0.5</property>
   <property name="show-text">true</property>
@@ -176,14 +176,14 @@ const CATEGORIES: &[Category] = &[
             },
             WidgetEntry {
                 name: "Spinner",
-                icon: "⟳",
+                icon: "\u{F110}",  // nf-fa-spinner
                 snippet: r#"<object class="GtkSpinner">
   <property name="spinning">true</property>
 </object>"#,
             },
             WidgetEntry {
                 name: "LevelBar",
-                icon: "▮",
+                icon: "\u{F241}",  // nf-fa-battery_quarter
                 snippet: r#"<object class="GtkLevelBar">
   <property name="value">0.6</property>
   <property name="min-value">0</property>
@@ -197,28 +197,28 @@ const CATEGORIES: &[Category] = &[
         widgets: &[
             WidgetEntry {
                 name: "Button",
-                icon: "🔘",
+                icon: "\u{F25A}",  // nf-fa-hand_pointer_o (clickable)
                 snippet: r#"<object class="GtkButton">
   <property name="label">Click Me</property>
 </object>"#,
             },
             WidgetEntry {
                 name: "ToggleButton",
-                icon: "⊡",
+                icon: "\u{F204}",  // nf-fa-toggle_off
                 snippet: r#"<object class="GtkToggleButton">
   <property name="label">Toggle</property>
 </object>"#,
             },
             WidgetEntry {
                 name: "CheckButton",
-                icon: "☑",
+                icon: "\u{F14A}",  // nf-fa-check_square
                 snippet: r#"<object class="GtkCheckButton">
   <property name="label">Check me</property>
 </object>"#,
             },
             WidgetEntry {
                 name: "Switch",
-                icon: "⏻",
+                icon: "\u{F205}",  // nf-fa-toggle_on
                 snippet: r#"<object class="GtkSwitch">
   <property name="active">false</property>
   <property name="halign">start</property>
@@ -226,21 +226,21 @@ const CATEGORIES: &[Category] = &[
             },
             WidgetEntry {
                 name: "Entry",
-                icon: "⌨",
+                icon: "\u{F11C}",  // nf-fa-keyboard_o
                 snippet: r#"<object class="GtkEntry">
   <property name="placeholder-text">Type here…</property>
 </object>"#,
             },
             WidgetEntry {
                 name: "PasswordEntry",
-                icon: "🔒",
+                icon: "\u{F023}",  // nf-fa-lock
                 snippet: r#"<object class="GtkPasswordEntry">
   <property name="show-peek-icon">true</property>
 </object>"#,
             },
             WidgetEntry {
                 name: "SpinButton",
-                icon: "🔢",
+                icon: "\u{F162}",  // nf-fa-sort_numeric_asc
                 snippet: r#"<object class="GtkSpinButton">
   <property name="adjustment">
     <object class="GtkAdjustment">
@@ -254,7 +254,7 @@ const CATEGORIES: &[Category] = &[
             },
             WidgetEntry {
                 name: "Scale",
-                icon: "⟺",
+                icon: "\u{F1DE}",  // nf-fa-sliders
                 snippet: r#"<object class="GtkScale">
   <property name="orientation">horizontal</property>
   <property name="hexpand">true</property>
@@ -271,7 +271,7 @@ const CATEGORIES: &[Category] = &[
             },
             WidgetEntry {
                 name: "ComboBoxText",
-                icon: "▾",
+                icon: "\u{F0D7}",  // nf-fa-caret_down
                 snippet: r#"<object class="GtkComboBoxText">
   <items>
     <item>Option 1</item>
@@ -282,7 +282,7 @@ const CATEGORIES: &[Category] = &[
             },
             WidgetEntry {
                 name: "DropDown",
-                icon: "⏷",
+                icon: "\u{F150}",  // nf-fa-caret_square_o_down
                 snippet: r#"<object class="GtkDropDown">
   <property name="model">
     <object class="GtkStringList">
@@ -302,7 +302,7 @@ const CATEGORIES: &[Category] = &[
         widgets: &[
             WidgetEntry {
                 name: "TextView",
-                icon: "📝",
+                icon: "\u{F15C}",  // nf-fa-file_text
                 snippet: r#"<object class="GtkTextView">
   <property name="editable">true</property>
   <property name="wrap-mode">word</property>
@@ -312,7 +312,7 @@ const CATEGORIES: &[Category] = &[
             },
             WidgetEntry {
                 name: "SearchEntry",
-                icon: "🔍",
+                icon: "\u{F002}",  // nf-fa-search
                 snippet: r#"<object class="GtkSearchEntry">
   <property name="placeholder-text">Search…</property>
 </object>"#,
@@ -324,7 +324,7 @@ const CATEGORIES: &[Category] = &[
         widgets: &[
             WidgetEntry {
                 name: "HeaderBar",
-                icon: "▔",
+                icon: "\u{F2D2}",  // nf-fa-window_maximize (title bar feel)
                 snippet: r#"<object class="GtkHeaderBar">
   <child type="start">
     <object class="GtkButton">
@@ -340,7 +340,7 @@ const CATEGORIES: &[Category] = &[
             },
             WidgetEntry {
                 name: "ActionBar",
-                icon: "▁",
+                icon: "\u{F2D3}",  // nf-fa-window_minimize (bottom bar feel)
                 snippet: r#"<object class="GtkActionBar">
   <child type="start">
     <object class="GtkButton">
@@ -356,7 +356,7 @@ const CATEGORIES: &[Category] = &[
             },
             WidgetEntry {
                 name: "Expander",
-                icon: "▶",
+                icon: "\u{F054}",  // nf-fa-chevron_right (expandable)
                 snippet: r#"<object class="GtkExpander">
   <property name="label">Details</property>
   <child>
@@ -408,6 +408,7 @@ impl Palette {
                 let btn = Button::new();
                 let btn_label = Label::new(Some(&format!("{} {}", entry.icon, entry.name)));
                 btn_label.set_halign(gtk4::Align::Start);
+                btn_label.add_css_class("nf");
                 btn.set_child(Some(&btn_label));
                 btn.add_css_class("flat");
                 btn.set_tooltip_text(Some(entry.name));

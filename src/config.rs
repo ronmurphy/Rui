@@ -145,5 +145,9 @@ pub fn default_css() -> String {
     outline-offset: 2px;
     border-radius: 4px;
 }
+/* Nerd Font icon labels — uses FiraCode Nerd Font for PUA glyph rendering */
+.nf {
+    font-family: "FiraCode Nerd Font Mono", "FiraCode Nerd Font", monospace;
+}
 "#.to_string()
 }

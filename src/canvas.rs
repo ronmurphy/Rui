@@ -106,9 +106,11 @@ impl Canvas {
         merge_toolbar.set_margin_top(4);
         merge_toolbar.set_margin_bottom(2);
 
-        let merge_btn = ToggleButton::with_label("Merge Cells");
-        let apply_btn = Button::with_label("Apply Merge");
+        let merge_btn = ToggleButton::with_label("\u{F0C4}  Merge Cells");
+        merge_btn.add_css_class("nf");
+        let apply_btn = Button::with_label("\u{F00C}  Apply Merge");
         apply_btn.add_css_class("suggested-action");
+        apply_btn.add_css_class("nf");
         apply_btn.set_sensitive(false);
         merge_toolbar.append(&merge_btn);
         merge_toolbar.append(&apply_btn);
@@ -641,17 +643,20 @@ fn build_widget(node: roxmltree::Node, ctx: &ClickCtx) -> Option<Widget> {
                         pop_box.set_margin_top(4);
                         pop_box.set_margin_bottom(4);
 
-                        let up_btn = Button::with_label("▲ Up");
+                        let up_btn = Button::with_label("\u{F062}  Up");
                         up_btn.add_css_class("flat");
+                        up_btn.add_css_class("nf");
                         up_btn.set_sensitive(idx > 0);
 
-                        let down_btn = Button::with_label("▼ Down");
+                        let down_btn = Button::with_label("\u{F063}  Down");
                         down_btn.add_css_class("flat");
+                        down_btn.add_css_class("nf");
                         down_btn.set_sensitive(idx + 1 < ranges.len());
 
-                        // "↵ Into" — insert this child into an adjacent container
-                        let into_btn = Button::with_label("↵ Into");
+                        // "Into" — insert this child into an adjacent container
+                        let into_btn = Button::with_label("\u{F090}  Into");
                         into_btn.add_css_class("flat");
+                        into_btn.add_css_class("nf");
                         // Sensitive if an adjacent sibling is a container
                         let has_container_neighbor = {
                             let above_is_container = idx > 0
@@ -662,8 +667,9 @@ fn build_widget(node: roxmltree::Node, ctx: &ClickCtx) -> Option<Widget> {
                         };
                         into_btn.set_sensitive(has_container_neighbor);
 
-                        let del_btn = Button::with_label("✕ Del");
+                        let del_btn = Button::with_label("\u{F014}  Del");
                         del_btn.add_css_class("flat");
+                        del_btn.add_css_class("nf");
 
                         pop_box.append(&up_btn);
                         pop_box.append(&down_btn);
@@ -919,10 +925,12 @@ fn build_widget(node: roxmltree::Node, ctx: &ClickCtx) -> Option<Widget> {
 
                         let btn_box = GtkBox::new(Orientation::Horizontal, 4);
                         btn_box.set_margin_top(4);
-                        let apply_btn = Button::with_label("Apply");
+                        let apply_btn = Button::with_label("\u{F00C}  Apply");
                         apply_btn.add_css_class("suggested-action");
-                        let gdel_btn = Button::with_label("✕ Del");
+                        apply_btn.add_css_class("nf");
+                        let gdel_btn = Button::with_label("\u{F014}  Del");
                         gdel_btn.add_css_class("destructive-action");
+                        gdel_btn.add_css_class("nf");
                         btn_box.append(&apply_btn);
                         btn_box.append(&gdel_btn);
                         pop_vbox.append(&btn_box);
