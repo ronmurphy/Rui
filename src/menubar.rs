@@ -6,7 +6,7 @@ use gtk4::Application;
 /// caller fills with MRU entries:
 ///   1. `recent_files_menu`   — populated by `rebuild_mru_menus`
 ///   2. `recent_projects_menu` — populated by `rebuild_mru_menus`
-pub fn build(app: &Application) -> (gtk4::PopoverMenuBar, Menu, Menu) {
+pub fn build(app: &Application) -> (Menu, Menu, Menu) {
     let menubar_model = Menu::new();
 
     // ── File ─────────────────────────────────────────────────────
@@ -121,7 +121,7 @@ pub fn build(app: &Application) -> (gtk4::PopoverMenuBar, Menu, Menu) {
         app.add_action(&action);
     }
 
-    (gtk4::PopoverMenuBar::from_model(Some(&menubar_model)), recent_files_menu, recent_projects_menu)
+    (menubar_model, recent_files_menu, recent_projects_menu)
 }
 
 pub fn connect_action<F>(app: &Application, name: &str, cb: F)

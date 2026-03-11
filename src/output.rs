@@ -13,7 +13,7 @@ pub type ErrorClickCb = Rc<RefCell<Option<Box<dyn Fn(PathBuf, i32, i32)>>>>;
 #[derive(Clone)]
 pub struct OutputPanel {
     pub widget:  GtkBox,
-    notebook:    Notebook,
+    stack:       gtk4::Stack,
     run_buf:     TextBuffer,
     run_view:    TextView,
     out_buf:     TextBuffer,
@@ -29,10 +29,9 @@ impl OutputPanel {
     pub fn new() -> Self {
         let vbox = GtkBox::new(Orientation::Vertical, 0);
 
-        let notebook = Notebook::builder()
-            .scrollable(true)
-            .show_border(false)
-            .build();
+        let stack = gtk4::Stack::new();
+        stack.set_vexpand(true);
+        stack.set_hexpand(true);
 
         let (out_view, out_buf) = make_text_view();
         let (prob_view, prob_buf) = make_text_view();
@@ -55,18 +54,19 @@ impl OutputPanel {
         run_buf.tag_table().add(&success_tag);
         run_buf.tag_table().add(&link_tag);
 
-        notebook.append_page(
-            &wrap_scroll(out_view.clone()),
-            Some(&gtk4::Label::new(Some("Output"))),
-        );
-        notebook.append_page(
-            &wrap_scroll(prob_view),
-            Some(&gtk4::Label::new(Some("Problems"))),
-        );
-        notebook.append_page(
-            &wrap_scroll(run_view.clone()),
-            Some(&gtk4::Label::new(Some("Run"))),
-        );
+        stack.add_titled(&wrap_scroll(out_view.clone()), Some("output"), "Output");
+        stack.add_titled(&wrap_scroll(prob_view), Some("problems"), "Problems");
+        stack.add_titled(&wrap_scroll(run_view.clone()), Some("run"), "Run");
+
+        let switcher = gtk4::StackSwitcher::new();
+        switcher.set_stack(Some(&stack));
+
+        let header = GtkBox::new(Orientation::Horizontal, 8);
+        header.set_margin_start(4);
+        header.set_margin_end(4);
+        header.set_margin_top(4);
+        header.set_margin_bottom(4);
+        header.append(&switcher);
 
         // Close button in the tab bar area
         let close_btn = Button::builder()
@@ -75,15 +75,18 @@ impl OutputPanel {
             .tooltip_text("Close panel")
             .build();
         close_btn.add_css_class("flat");
+        close_btn.set_hexpand(true);
+        close_btn.set_halign(gtk4::Align::End);
         {
             let w = vbox.clone();
             close_btn.connect_clicked(move |_| {
                 w.set_visible(false);
             });
         }
-        notebook.set_action_widget(&close_btn, gtk4::PackType::End);
+        header.append(&close_btn);
 
-        vbox.append(&notebook);
+        vbox.append(&header);
+        vbox.append(&stack);
 
         let on_error_click: ErrorClickCb = Rc::new(RefCell::new(None));
 
@@ -124,7 +127,7 @@ impl OutputPanel {
 
         Self {
             widget: vbox,
-            notebook,
+            stack,
             run_view: run_view,
             run_buf,
             out_buf,
@@ -144,7 +147,7 @@ impl OutputPanel {
     pub fn append_run_line(&self, text: &str) {
         append_line(&self.run_buf, text, None::<&TextTag>);
         self.scroll_run_to_bottom();
-        self.notebook.set_current_page(Some(2));
+        self.stack.set_visible_child_name("run");
     }
 
     pub fn append_run_error(&self, text: &str) {
@@ -156,7 +159,7 @@ impl OutputPanel {
             append_line(&self.run_buf, text, Some(&self.error_tag));
         }
         self.scroll_run_to_bottom();
-        self.notebook.set_current_page(Some(2));
+        self.stack.set_visible_child_name("run");
     }
 
     pub fn append_run_success(&self, text: &str) {
@@ -197,14 +200,14 @@ impl OutputPanel {
     }
 
     pub fn switch_to_run(&self) {
-        self.notebook.set_current_page(Some(2));
+        self.stack.set_visible_child_name("run");
     }
 
     fn scroll_run_to_bottom(&self) {
         let end = self.run_buf.end_iter();
         let mark = self.run_buf.create_mark(None, &end, false);
-        self.run_buf.place_cursor(&end);
-        let _ = mark;
+        // Do not place cursor! Scroll to mark instead.
+        self.run_view.scroll_to_mark(&mark, 0.0, true, 0.0, 1.0);
     }
 }
 

@@ -115,6 +115,7 @@ impl Canvas {
             .vexpand(true)
             .child(&container)
             .build();
+        scroll.add_css_class("designer-canvas");
 
         // ── Merge-mode toolbar ──────────────────────────────────────
         let merge_toolbar = GtkBox::new(Orientation::Horizontal, 6);
@@ -283,9 +284,17 @@ impl Canvas {
         let mut count = 0;
         for obj_node in &object_nodes {
             if let Some(w) = build_widget(*obj_node, &ctx) {
-                let frame = Frame::new(None);
-                frame.set_child(Some(&w));
-                result_box.append(&frame);
+                let board_wrapper = GtkBox::new(Orientation::Vertical, 0);
+                board_wrapper.add_css_class("designer-board");
+                board_wrapper.set_margin_start(40);
+                board_wrapper.set_margin_end(40);
+                board_wrapper.set_margin_top(40);
+                board_wrapper.set_margin_bottom(40);
+                board_wrapper.set_halign(gtk4::Align::Center);
+                board_wrapper.set_valign(gtk4::Align::Center);
+                board_wrapper.append(&w);
+
+                result_box.append(&board_wrapper);
                 count += 1;
             }
         }

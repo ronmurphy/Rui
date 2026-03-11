@@ -152,6 +152,18 @@ pub fn default_css() -> String {
     font-family: monospace;
     padding: 4px 8px;
 }
+.designer-canvas {
+    background-color: #4A90E2;
+    background-image: linear-gradient(rgba(255, 255, 255, 0.15) 1px, transparent 1px),
+                      linear-gradient(90deg, rgba(255, 255, 255, 0.15) 1px, transparent 1px);
+    background-size: 40px 40px;
+}
+.designer-board {
+    background-color: @theme_bg_color;
+    box-shadow: 0 4px 18px 0 rgba(0, 0, 0, 0.3);
+    border-radius: 8px;
+    border: 1px solid alpha(currentColor, 0.15);
+}
 .editor-help-title {
     font-size: 1.4em;
     font-weight: bold;
@@ -176,9 +188,14 @@ pub fn default_css() -> String {
     outline-offset: 1px;
     border-radius: 4px;
 }
-/* Nerd Font icon labels — uses FiraCode Nerd Font for PUA glyph rendering */
 .nf {
     font-family: "FiraCode Nerd Font Mono", "FiraCode Nerd Font", monospace;
+}
+/* Shorter padding for master toolbar buttons */
+button.toolbar-icon {
+    padding: 2px 4px;
+    min-height: 24px;
+    min-width: 28px;
 }
 "#.to_string()
 }

@@ -264,7 +264,7 @@ pub fn generate_all_handlers(xml: &str, ui_filename: &str) -> String {
 
         out.push_str(&format!(
             "/// Handler for {class}{id_comment} — signal \"{signal}\"\n\
-             fn {fn_name}(widget: &{short}){ret} {{\n\
+             fn {fn_name}(widget: &gtk4::{short}){ret} {{\n\
              \x20   // TODO: implement handler{ret_body}\n\
              }}\n\n",
             class = h.class,
@@ -531,7 +531,7 @@ pub fn merge_handlers(existing: &str, xml: &str, ui_filename: &str) -> String {
         };
         out.push_str(&format!(
             "/// Handler for {class}{id_comment} — signal \"{signal}\"\n\
-             fn {fn_name}(widget: &{short}){ret} {{\n\
+             fn {fn_name}(widget: &gtk4::{short}){ret} {{\n\
              \x20   // TODO: implement handler{ret_body}\n\
              }}\n\n",
             class = h.class,

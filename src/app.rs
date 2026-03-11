@@ -75,6 +75,9 @@ struct AppState {
     vert_paned: Paned,
     left_nb:   GtkNotebook,
     center_nb: GtkNotebook,
+    right_nb:  GtkNotebook,
+    right_paned: Paned,
+    ai_stack: gtk4::Stack,
     minimap: Map,
 }
 
@@ -324,7 +327,29 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         .default_height(800)
         .build();
 
-    let (menubar_widget, recent_files_menu, recent_projects_menu) = menubar::build(app);
+    let (menubar_model, recent_files_menu, recent_projects_menu) = menubar::build(app);
+
+    // ── Header Bar (CSD) ─────────────────────────────────────────
+    let header_bar = gtk4::HeaderBar::new();
+    window.set_titlebar(Some(&header_bar));
+
+    let menu_btn = gtk4::MenuButton::new();
+    menu_btn.set_icon_name("open-menu-symbolic");
+    menu_btn.set_menu_model(Some(&menubar_model));
+    header_bar.pack_start(&menu_btn);
+
+    // View Switcher (Design / Code)
+    let view_switcher = GtkBox::new(Orientation::Horizontal, 0);
+    view_switcher.add_css_class("linked");
+
+    let btn_design = gtk4::ToggleButton::with_label("Design");
+    let btn_code = gtk4::ToggleButton::with_label("Code");
+    btn_design.set_active(true);
+    btn_code.set_group(Some(&btn_design));
+
+    view_switcher.append(&btn_design);
+    view_switcher.append(&btn_code);
+    header_bar.set_title_widget(Some(&view_switcher));
 
     let minimap = Map::new();
     minimap.set_size_request(100, -1);
@@ -345,6 +370,7 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
     // ── Center notebook: Design (canvas) | Code (editor) ──────────
     let center_nb = GtkNotebook::new();
     center_nb.set_show_border(false);
+    center_nb.set_show_tabs(false);
     center_nb.set_hexpand(true);
     center_nb.set_vexpand(true);
     canvas.widget.set_hexpand(true);
@@ -365,16 +391,27 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         });
     }
 
-    // ── Left notebook: Files (sidebar) | Widgets (toolbox) ────────
+    {
+        let center_nb_ref = center_nb.clone();
+        btn_design.connect_toggled(move |btn| {
+            if btn.is_active() {
+                center_nb_ref.set_current_page(Some(0));
+            } else {
+                center_nb_ref.set_current_page(Some(1));
+            }
+        });
+    }
+
+    // ── Left notebook: Tree | Widgets | Files ────────
     let left_nb = GtkNotebook::new();
     left_nb.set_show_border(false);
     left_nb.set_width_request(230);
     sidebar.widget.set_visible(true);
     toolbox.widget.set_visible(true);
     outline.widget.set_visible(true);
-    left_nb.append_page(&sidebar.widget,  Some(&Label::new(Some("  Files  "))));
-    left_nb.append_page(&toolbox.widget,  Some(&Label::new(Some("  Widgets  "))));
     left_nb.append_page(&outline.widget,  Some(&Label::new(Some("  Tree  "))));
+    left_nb.append_page(&toolbox.widget,  Some(&Label::new(Some("  Widgets  "))));
+    left_nb.append_page(&sidebar.widget,  Some(&Label::new(Some("  Files  "))));
 
     // Default to Designer layout
     left_nb.set_current_page(Some(1));   // start on Widgets tab
@@ -398,20 +435,125 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
     // ── API Chat panel (multi-provider, key-based, no CLI required) ──
     let ai_chat_panel = AiChatPanel::new();
 
-    // Wrap center_nb + AI sidebar + Claude panel + API chat panel in a
-    // horizontal box so sidebars appear to the right of the designer area.
-    let center_area = GtkBox::new(Orientation::Horizontal, 0);
+    // ── Master Toolbar ────────
+    // Helper to create tool buttons
+    let make_tool_btn = |icon: &str, tooltip: &str, action: &str| -> gtk4::Button {
+        let btn = gtk4::Button::builder()
+            .label(icon)
+            .tooltip_text(tooltip)
+            .action_name(action)
+            .build();
+        btn.add_css_class("nf");
+        btn.add_css_class("flat");
+        btn.add_css_class("toolbar-icon");
+        btn
+    };
+
+    let master_toolbar = GtkBox::new(Orientation::Horizontal, 2);
+    master_toolbar.add_css_class("toolbar");
+    master_toolbar.set_margin_top(2);
+    master_toolbar.set_margin_bottom(2);
+    master_toolbar.set_margin_start(4);
+    master_toolbar.set_margin_end(4);
+    master_toolbar.set_halign(gtk4::Align::Center);
+
+    master_toolbar.append(&make_tool_btn("\u{f067}", "New Project", "app.new-project"));
+    master_toolbar.append(&make_tool_btn("\u{f115}", "Open Project", "app.open-project"));
+    master_toolbar.append(&make_tool_btn("\u{f0c7}", "Save All", "app.save-all"));
+    
+    let sep1 = gtk4::Separator::new(Orientation::Vertical);
+    sep1.set_margin_start(4); sep1.set_margin_end(4);
+    master_toolbar.append(&sep1);
+    
+    master_toolbar.append(&make_tool_btn("\u{f0e2}", "Undo", "app.designer-undo"));
+    master_toolbar.append(&make_tool_btn("\u{f01e}", "Redo", "app.designer-redo"));
+    
+    let sep2 = gtk4::Separator::new(Orientation::Vertical);
+    sep2.set_margin_start(4); sep2.set_margin_end(4);
+    master_toolbar.append(&sep2);
+    
+    master_toolbar.append(&make_tool_btn("\u{f013}", "Generate Handlers", "app.generate-handlers"));
+    master_toolbar.append(&make_tool_btn("\u{f02d}", "Template Library", "app.template-library"));
+    
+    let sep3 = gtk4::Separator::new(Orientation::Vertical);
+    sep3.set_margin_start(4); sep3.set_margin_end(4);
+    master_toolbar.append(&sep3);
+    
+    master_toolbar.append(&make_tool_btn("\u{f04b}", "Run", "app.run"));
+    master_toolbar.append(&make_tool_btn("\u{f085}", "Build", "app.build"));
+    master_toolbar.append(&make_tool_btn("\u{f04d}", "Stop", "app.stop"));
+    
+    let sep4 = gtk4::Separator::new(Orientation::Vertical);
+    sep4.set_margin_start(4); sep4.set_margin_end(4);
+    master_toolbar.append(&sep4);
+    
+    master_toolbar.append(&make_tool_btn("\u{f186}", "Toggle Dark Mode", "app.toggle-dark"));
+    master_toolbar.append(&make_tool_btn("\u{f29c}", "Help", "app.help"));
+
+    // Wrap center_nb in center_area (with Master Toolbar above)
+    let center_area = GtkBox::new(Orientation::Vertical, 0);
     center_area.set_hexpand(true);
     center_area.set_vexpand(true);
+    center_area.append(&master_toolbar);
     center_area.append(&center_nb);
+
+    // ── Right notebook: Properties | AI Chat ────────
+    let right_nb = GtkNotebook::new();
+    right_nb.set_show_border(false);
+    right_nb.set_width_request(260);
+    
+    toolbox.inspector.widget.set_visible(true);
+    toolbox.inspector.widget.set_vexpand(true);
+    right_nb.append_page(&toolbox.inspector.widget, Some(&Label::new(Some(" Properties "))));
+
+    // ── AI Stack (Web AI, Claude, API Chat) ───────
+    let ai_stack = gtk4::Stack::new();
+    ai_stack.set_vexpand(true);
+    ai_stack.set_hexpand(true);
+
+    let ai_switcher = gtk4::StackSwitcher::new();
+    ai_switcher.set_stack(Some(&ai_stack));
+    ai_switcher.set_halign(gtk4::Align::Center);
+    ai_switcher.set_margin_top(4);
+    ai_switcher.set_margin_bottom(4);
+
     #[cfg(feature = "preview")]
-    center_area.append(&ai_sidebar.widget);
-    center_area.append(&claude_panel.widget);
-    center_area.append(&ai_chat_panel.widget);
+    {
+        ai_sidebar.widget.set_visible(true);
+        ai_stack.add_titled(&ai_sidebar.widget, Some("web"), "Web AI");
+    }
+    claude_panel.widget.set_visible(true);
+    ai_stack.add_titled(&claude_panel.widget, Some("claude"), "Claude");
+    
+    ai_chat_panel.widget.set_visible(true);
+    ai_stack.add_titled(&ai_chat_panel.widget, Some("api"), "API Chat");
+
+    let ai_box = GtkBox::new(Orientation::Vertical, 0);
+    ai_box.append(&ai_switcher);
+    ai_box.append(&ai_stack);
+
+    right_nb.append_page(&ai_box, Some(&Label::new(Some(" AI Chat "))));
+
+    let right_paned = Paned::new(Orientation::Horizontal);
+    right_paned.set_start_child(Some(&center_area));
+    right_paned.set_end_child(Some(&right_nb));
+    right_paned.set_resize_start_child(true);
+    right_paned.set_resize_end_child(false);
+    right_paned.set_shrink_start_child(false);
+    right_paned.set_shrink_end_child(false);
+    {
+        let p = right_paned.clone();
+        right_paned.connect_map(move |_| {
+            let w = p.allocated_width();
+            if w > 300 {
+                p.set_position(w - 280);
+            }
+        });
+    }
 
     let main_paned = Paned::new(Orientation::Horizontal);
     main_paned.set_start_child(Some(&left_nb));
-    main_paned.set_end_child(Some(&center_area));
+    main_paned.set_end_child(Some(&right_paned));
     main_paned.set_resize_start_child(false);
     main_paned.set_resize_end_child(true);
     main_paned.set_shrink_start_child(false);
@@ -429,7 +571,6 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
     }
 
     let root = GtkBox::new(Orientation::Vertical, 0);
-    root.append(&menubar_widget);
     root.append(&vert_paned);
     root.append(&statusbar.widget);
 
@@ -458,6 +599,9 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         vert_paned: vert_paned.clone(),
         left_nb:   left_nb.clone(),
         center_nb: center_nb.clone(),
+        right_nb:  right_nb.clone(),
+        right_paned: right_paned.clone(),
+        ai_stack:  ai_stack.clone(),
         minimap:   minimap.clone(),
         #[cfg(feature = "preview")]
         preview:   preview.clone(),
@@ -1238,6 +1382,20 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
             if let Some(settings) = gtk4::Settings::default() {
                 let dark = settings.is_gtk_application_prefer_dark_theme();
                 settings.set_gtk_application_prefer_dark_theme(!dark);
+                
+                // Keep the theme name in sync (Adwaita/Adwaita-dark or similar)
+                let theme_name = settings.gtk_theme_name().unwrap_or_else(|| "Adwaita".into()).to_string();
+                if dark {
+                    // Turn Light
+                    if theme_name.ends_with("-dark") {
+                        settings.set_gtk_theme_name(Some(&theme_name.replace("-dark", "")));
+                    }
+                } else {
+                    // Turn Dark
+                    if !theme_name.ends_with("-dark") {
+                        settings.set_gtk_theme_name(Some(&format!("{}-dark", theme_name)));
+                    }
+                }
             }
         });
     }
@@ -1535,60 +1693,36 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         });
     }
 
-    // AI → Open AI Chat (toggle sidebar, resize window to fit)
+    // AI → Open AI Chat (swaps to Web AI tab)
     #[cfg(feature = "preview")]
     {
         let st = state.clone();
         menubar::connect_action(app, "ai-open", move || {
             let s = st.borrow();
-            let now_visible = s.ai_sidebar.toggle();
-            let win = &s.window;
-            let cur_w = win.width();
-            let cur_h = win.height();
-            let delta = ai_panel::SIDEBAR_WIDTH;
-            if now_visible {
-                win.set_default_size(cur_w + delta, cur_h);
-            } else {
-                win.set_default_size((cur_w - delta).max(800), cur_h);
-            }
+            s.right_nb.set_current_page(Some(1));
+            s.ai_stack.set_visible_child_name("web");
         });
     }
     #[cfg(not(feature = "preview"))]
     menubar::connect_action(app, "ai-open", move || {});
 
-    // AI → Open Claude Code (toggle panel, resize window)
+    // AI → Open Claude Code
     {
         let st = state.clone();
         menubar::connect_action(app, "claude-code-open", move || {
             let s = st.borrow();
-            let now_visible = s.claude_panel.toggle();
-            let win = &s.window;
-            let cur_w = win.width();
-            let cur_h = win.height();
-            let delta = crate::claude_code::SIDEBAR_WIDTH;
-            if now_visible {
-                win.set_default_size(cur_w + delta, cur_h);
-            } else {
-                win.set_default_size((cur_w - delta).max(800), cur_h);
-            }
+            s.right_nb.set_current_page(Some(1));
+            s.ai_stack.set_visible_child_name("claude");
         });
     }
 
-    // AI → Open API Chat (toggle panel, resize window)
+    // AI → Open API Chat
     {
         let st = state.clone();
         menubar::connect_action(app, "api-chat-open", move || {
             let s = st.borrow();
-            let now_visible = s.ai_chat_panel.toggle();
-            let win = &s.window;
-            let cur_w = win.width();
-            let cur_h = win.height();
-            let delta = crate::ai_chat_panel::SIDEBAR_WIDTH;
-            if now_visible {
-                win.set_default_size(cur_w + delta, cur_h);
-            } else {
-                win.set_default_size((cur_w - delta).max(800), cur_h);
-            }
+            s.right_nb.set_current_page(Some(1));
+            s.ai_stack.set_visible_child_name("api");
         });
     }
 
