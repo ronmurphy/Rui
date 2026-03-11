@@ -172,7 +172,8 @@ pub fn generate_all_handlers(xml: &str, ui_filename: &str) -> String {
              ///\n\
              /// Call this after building your UI from the .ui file.\n\
              #[allow(unused_imports)]\n\
-             use gtk4::prelude::*;\n\n\
+             use gtk4::prelude::*;\n\
+             use gtk4::glib;\n\n\
              pub fn connect_handlers(_builder: &gtk4::Builder) {{\n\
              \x20   // No interactive widgets with signals found in the .ui file.\n\
              }}\n"
@@ -190,6 +191,7 @@ pub fn generate_all_handlers(xml: &str, ui_filename: &str) -> String {
 
     out.push_str("#[allow(unused_imports)]\n");
     out.push_str("use gtk4::prelude::*;\n");
+    out.push_str("use gtk4::glib;\n");
 
     // Collect unique GTK types we'll need to import
     let mut types: Vec<&str> = Vec::new();

@@ -313,17 +313,15 @@ fn build_command(path: &Path) -> Option<(String, Vec<String>, PathBuf)> {
 
         "sh" | "bash" => Some(("bash".into(), vec![file_str], cwd)),
 
-        // .ui file inside a Cargo project → cargo run that project
+        // .ui file → cargo run its own project directory.
+        // Only check the immediate parent so that projects nested inside other
+        // workspaces (e.g. the Rui source tree) use their own Cargo.toml.
         "ui" => {
-            if let Some(cargo_dir) = find_cargo_toml(path) {
-                if is_rui_workspace(&cargo_dir) {
-                    None
-                } else {
-                    Some(("cargo".into(), vec!["run".into()], cargo_dir))
-                }
-            } else {
-                None
-            }
+            let cargo_dir = path
+                .parent()
+                .filter(|d| d.join("Cargo.toml").exists() && !is_rui_workspace(d))
+                .map(|d| d.to_path_buf());
+            cargo_dir.map(|d| ("cargo".into(), vec!["run".into()], d))
         }
 
         _ => None,
