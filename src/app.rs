@@ -315,6 +315,7 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
     let find_bar   = FindBar::new();
     let canvas     = Canvas::new();
     canvas.init_merge_toolbar();
+    canvas.init_zoom();
     {
         let out = output.clone();
         canvas.on_xml_error(move |msg| {
@@ -883,6 +884,8 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
             let st2 = st.clone();
             show_layout_dialog(&win, move |template| {
                 let s = st2.borrow();
+                s.notebook.close_all();
+                s.canvas.clear();
                 s.notebook.new_tab(&s.cfg);
                 if let Some(tab) = s.notebook.current_tab() {
                     tab.buffer().set_text(&template);
@@ -934,6 +937,8 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
                             st3.borrow_mut().project_dir = Some(dir.clone());
 
                             let s = st3.borrow();
+                            s.notebook.close_all();
+                            s.canvas.clear();
                             s.sidebar.set_root(&dir);
 
                             let ui_path = dir.join("layout.ui");
@@ -1032,6 +1037,8 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
 
                         {
                             let s = st2.borrow();
+                            s.notebook.close_all();
+                            s.canvas.clear();
                             s.sidebar.set_root(&dir);
 
                             // Auto-open layout.ui if it exists

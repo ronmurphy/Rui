@@ -11,7 +11,8 @@
 use gtk4::prelude::*;
 use gtk4::{
     Adjustment, Box as GtkBox, Button, CenterBox, CheckButton,
-    DragSource, DropDown, DropTarget, Entry, Expander, Frame, GestureClick,
+    DragSource, DropDown, DropTarget, Entry, EventControllerScroll,
+    EventControllerScrollFlags, Expander, Frame, GestureClick, GestureDrag,
     Grid, HeaderBar, Image, Label, LevelBar, ListBox, Notebook, Orientation,
     Overlay, Paned, PasswordEntry, Popover, ProgressBar, Scale, ScrolledWindow,
     SearchEntry, Separator, SpinButton, Spinner, Switch, TextView, ToggleButton,
@@ -91,6 +92,14 @@ pub struct Canvas {
     tree_selected: Rc<RefCell<Option<Widget>>>,
     /// Callback fired when a canvas widget is clicked (for palette insert target).
     on_select: SelectCb,
+    /// The ScrolledWindow wrapping the canvas (needed for pan/zoom gestures).
+    scroll: ScrolledWindow,
+    /// Current zoom factor (1.0 = 100%).
+    zoom: Rc<Cell<f64>>,
+    /// CSS provider used to apply the zoom transform to the container.
+    zoom_css: gtk4::CssProvider,
+    /// Last rendered XML — stored so zoom changes can trigger a re-render.
+    last_xml: Rc<RefCell<String>>,
 }
 
 impl Canvas {
@@ -116,6 +125,38 @@ impl Canvas {
             .child(&container)
             .build();
         scroll.add_css_class("designer-canvas");
+
+        // ── Zoom CSS provider ─────────────────────────────────────────
+        let zoom_css = gtk4::CssProvider::new();
+        if let Some(display) = gtk4::gdk::Display::default() {
+            gtk4::style_context_add_provider_for_display(
+                &display,
+                &zoom_css,
+                gtk4::STYLE_PROVIDER_PRIORITY_USER,
+            );
+        }
+        container.add_css_class("canvas-zoom-host");
+
+        // ── Middle-click pan ──────────────────────────────────────────
+        let pan = GestureDrag::new();
+        pan.set_button(2);
+        {
+            let scroll_pan = scroll.clone();
+            let scroll_origin: Rc<Cell<(f64, f64)>> = Rc::new(Cell::new((0.0, 0.0)));
+            let scroll_origin2 = scroll_origin.clone();
+            pan.connect_drag_begin(move |_, _x, _y| {
+                let h = scroll_pan.hadjustment().value();
+                let v = scroll_pan.vadjustment().value();
+                scroll_origin.set((h, v));
+            });
+            let scroll_pan2 = scroll.clone();
+            pan.connect_drag_update(move |_, dx, dy| {
+                let (h0, v0) = scroll_origin2.get();
+                scroll_pan2.hadjustment().set_value(h0 - dx);
+                scroll_pan2.vadjustment().set_value(v0 - dy);
+            });
+        }
+        scroll.add_controller(pan);
 
         // ── Merge-mode toolbar ──────────────────────────────────────
         let merge_toolbar = GtkBox::new(Orientation::Horizontal, 6);
@@ -161,6 +202,10 @@ impl Canvas {
             offset_to_widget: Rc::new(RefCell::new(std::collections::HashMap::new())),
             tree_selected: Rc::new(RefCell::new(None)),
             on_select: Rc::new(RefCell::new(None)),
+            scroll,
+            zoom: Rc::new(Cell::new(1.0)),
+            zoom_css,
+            last_xml: Rc::new(RefCell::new(String::new())),
         }
     }
 
@@ -200,8 +245,34 @@ impl Canvas {
         });
     }
 
+    /// Wire up Ctrl+scroll zoom on the canvas.  Call once after Canvas::new().
+    pub fn init_zoom(&self) {
+        let ctrl = EventControllerScroll::new(EventControllerScrollFlags::VERTICAL);
+        let canvas = self.clone();
+        ctrl.connect_scroll(move |c, _dx, dy| {
+            let mods = c.current_event_state();
+            if mods.contains(gtk4::gdk::ModifierType::CONTROL_MASK) {
+                let old = canvas.zoom.get();
+                // dy < 0 → scroll-up → zoom in; dy > 0 → zoom out
+                let new_zoom = (old * (1.0 - dy * 0.1)).clamp(0.25, 4.0);
+                canvas.zoom.set(new_zoom);
+                let xml = canvas.last_xml.borrow().clone();
+                if !xml.is_empty() {
+                    canvas.render(&xml);
+                }
+                gtk4::glib::Propagation::Stop
+            } else {
+                gtk4::glib::Propagation::Proceed
+            }
+        });
+        self.scroll.add_controller(ctrl);
+    }
+
     /// Render a .ui XML string into the preview pane using roxmltree.
     pub fn render(&self, xml: &str) {
+        // Store xml for zoom-triggered re-renders
+        *self.last_xml.borrow_mut() = xml.to_owned();
+
         // Remove previous child
         if let Some(old) = self.current_child.borrow_mut().take() {
             self.container.remove(&old);
@@ -306,6 +377,20 @@ impl Canvas {
             return;
         }
 
+        // Apply zoom: measure natural size, set container size_request, update CSS transform
+        let zoom = self.zoom.get();
+        let (_, nat_w, _, _) = result_box.measure(Orientation::Horizontal, -1);
+        let (_, nat_h, _, _) = result_box.measure(Orientation::Vertical, -1);
+        self.zoom_css.load_from_data(&format!(
+            ".canvas-zoom-host {{ transform: scale({zoom:.3}); transform-origin: 0px 0px; }}"
+        ));
+        self.container.set_hexpand(false);
+        self.container.set_vexpand(false);
+        self.container.set_size_request(
+            (nat_w as f64 * zoom) as i32,
+            (nat_h as f64 * zoom) as i32,
+        );
+
         self.container.append(&result_box);
         *self.current_child.borrow_mut() = Some(result_box.upcast::<Widget>());
         // Hide placeholder, let the scroll area fill the canvas
@@ -318,6 +403,11 @@ impl Canvas {
         if let Some(old) = self.current_child.borrow_mut().take() {
             self.container.remove(&old);
         }
+        // Reset zoom state so the empty canvas fills its space naturally
+        self.zoom_css.load_from_data("");
+        self.container.set_hexpand(true);
+        self.container.set_vexpand(true);
+        self.container.set_size_request(-1, -1);
         self.status.set_text("Open a .ui file or create one via File → New .ui File");
         self.status.set_visible(true);
         self.status.set_vexpand(true);

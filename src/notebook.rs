@@ -102,6 +102,14 @@ impl NotebookManager {
         }
     }
 
+    /// Close every open tab unconditionally (used when switching projects).
+    pub fn close_all(&self) {
+        // Always remove index 0 — after each removal the next tab becomes 0.
+        while self.tab_count() > 0 {
+            self.close_tab(0);
+        }
+    }
+
     pub fn current_tab(&self) -> Option<EditorTab> {
         let idx = self.current_index()?;
         self.tabs.borrow().get(idx).cloned()
