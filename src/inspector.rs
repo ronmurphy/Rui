@@ -7,7 +7,7 @@
 
 use gtk4::prelude::*;
 use gtk4::{
-    Box as GtkBox, CheckButton, DropDown, Entry, Grid, Label, Orientation,
+    Box as GtkBox, Button, CheckButton, DropDown, Entry, Grid, Label, Orientation,
     ScrolledWindow, Separator, StringList,
 };
 use sourceview5::prelude::*;
@@ -35,6 +35,13 @@ pub struct Inspector {
     clearing: Rc<Cell<bool>>,
     /// Guard flag: true while writing a property back to suppress re-entry.
     writing: Rc<Cell<bool>>,
+    // ── Widget selector (moved here from Toolbox) ────────────────────
+    selector_dd:           DropDown,
+    selector_offsets:      Rc<RefCell<Vec<usize>>>,
+    selector_child_ranges: Rc<RefCell<Vec<Option<(usize, usize)>>>>,
+    is_populating:         Rc<Cell<bool>>,
+    on_select_cb:          Rc<RefCell<Option<Box<dyn Fn(usize)>>>>,
+    on_delete_cb:          Rc<RefCell<Option<Box<dyn Fn(usize, usize)>>>>,
 }
 
 impl Inspector {
@@ -45,6 +52,67 @@ impl Inspector {
         header_label.set_margin_top(6);
         header_label.set_margin_bottom(2);
         header_label.add_css_class("heading");
+
+        // ── Widget selector row ──────────────────────────────────────
+        let selector_offsets:      Rc<RefCell<Vec<usize>>>                  = Rc::new(RefCell::new(Vec::new()));
+        let selector_child_ranges: Rc<RefCell<Vec<Option<(usize, usize)>>>> = Rc::new(RefCell::new(Vec::new()));
+        let is_populating  = Rc::new(Cell::new(false));
+        let on_select_cb:  Rc<RefCell<Option<Box<dyn Fn(usize)>>>>          = Rc::new(RefCell::new(None));
+        let on_delete_cb:  Rc<RefCell<Option<Box<dyn Fn(usize, usize)>>>>   = Rc::new(RefCell::new(None));
+
+        let selector_dd = DropDown::builder()
+            .model(&StringList::new(&[]))
+            .hexpand(true)
+            .tooltip_text("Select widget")
+            .build();
+
+        {
+            let is_pop  = is_populating.clone();
+            let offsets = selector_offsets.clone();
+            let cb_ref  = on_select_cb.clone();
+            selector_dd.connect_selected_notify(move |dd| {
+                if is_pop.get() { return; }
+                let idx = dd.selected();
+                if idx == gtk4::INVALID_LIST_POSITION { return; }
+                if let Some(&byte_offset) = offsets.borrow().get(idx as usize) {
+                    if let Some(cb) = cb_ref.borrow().as_ref() {
+                        cb(byte_offset);
+                    }
+                }
+            });
+        }
+
+        let trash_lbl = Label::new(Some("\u{F1F8}"));
+        trash_lbl.add_css_class("nf");
+        let trash_btn = Button::new();
+        trash_btn.set_child(Some(&trash_lbl));
+        trash_btn.add_css_class("flat");
+        trash_btn.set_valign(gtk4::Align::Center);
+        trash_btn.set_tooltip_text(Some("Delete selected widget"));
+
+        {
+            let dd_ref = selector_dd.clone();
+            let ranges = selector_child_ranges.clone();
+            let cb_ref = on_delete_cb.clone();
+            trash_btn.connect_clicked(move |_| {
+                let idx = dd_ref.selected();
+                if idx == gtk4::INVALID_LIST_POSITION { return; }
+                if let Some(Some((start, end))) = ranges.borrow().get(idx as usize) {
+                    if let Some(cb) = cb_ref.borrow().as_ref() {
+                        cb(*start, *end);
+                    }
+                }
+            });
+        }
+
+        let sel_row = GtkBox::new(Orientation::Horizontal, 4);
+        sel_row.set_margin_start(6);
+        sel_row.set_margin_end(6);
+        sel_row.set_margin_top(4);
+        sel_row.set_margin_bottom(4);
+        sel_row.append(&selector_dd);
+        sel_row.append(&trash_btn);
+        // ─────────────────────────────────────────────────────────────
 
         let content = GtkBox::new(Orientation::Vertical, 2);
         content.set_margin_start(4);
@@ -58,6 +126,7 @@ impl Inspector {
 
         let widget = GtkBox::new(Orientation::Vertical, 0);
         widget.append(&header_label);
+        widget.append(&sel_row);
         widget.append(&scroll);
 
         Inspector {
@@ -68,6 +137,12 @@ impl Inspector {
             entries: Rc::new(RefCell::new(Vec::new())),
             clearing: Rc::new(Cell::new(false)),
             writing: Rc::new(Cell::new(false)),
+            selector_dd,
+            selector_offsets,
+            selector_child_ranges,
+            is_populating,
+            on_select_cb,
+            on_delete_cb,
         }
     }
 
@@ -397,6 +472,27 @@ impl Inspector {
                 }
             });
         }
+    }
+
+    /// Repopulate the widget selector combo from a fresh outline rebuild.
+    pub fn populate_selector(&self, items: Vec<crate::outline::SelectorItem>) {
+        self.is_populating.set(true);
+        let strings: Vec<String> = items.iter().map(|i| i.label.clone()).collect();
+        let str_refs: Vec<&str>  = strings.iter().map(String::as_str).collect();
+        self.selector_dd.set_model(Some(&StringList::new(&str_refs)));
+        *self.selector_offsets.borrow_mut()      = items.iter().map(|i| i.byte_offset).collect();
+        *self.selector_child_ranges.borrow_mut() = items.iter().map(|i| i.child_range).collect();
+        self.is_populating.set(false);
+    }
+
+    /// Register a callback fired when a widget is chosen from the selector combo.
+    pub fn on_select_widget<F: Fn(usize) + 'static>(&self, cb: F) {
+        *self.on_select_cb.borrow_mut() = Some(Box::new(cb));
+    }
+
+    /// Register a callback fired when the trash button is clicked.
+    pub fn on_delete_widget<F: Fn(usize, usize) + 'static>(&self, cb: F) {
+        *self.on_delete_cb.borrow_mut() = Some(Box::new(cb));
     }
 
     pub fn toggle(&self) {

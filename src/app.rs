@@ -651,28 +651,28 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         });
     }
 
-    // Wire outline rebuild → toolbox selector combo.
+    // Wire outline rebuild → inspector selector combo.
     {
-        let toolbox_ref = toolbox.clone();
+        let inspector_ref = toolbox.inspector.clone();
         outline.on_rebuild(move |items| {
-            toolbox_ref.populate_selector(items);
+            inspector_ref.populate_selector(items);
         });
     }
 
-    // Wire toolbox selector combo selection → canvas highlight + inspector.
+    // Wire inspector selector combo selection → canvas highlight + inspector.
     {
-        let canvas_ref   = canvas.clone();
+        let canvas_ref    = canvas.clone();
         let inspector_ref = toolbox.inspector.clone();
-        toolbox.on_select_widget(move |byte_offset| {
+        toolbox.inspector.on_select_widget(move |byte_offset| {
             canvas_ref.select_from_tree(byte_offset);
             inspector_ref.update_from_offset(byte_offset);
         });
     }
 
-    // Wire toolbox selector trash button → delete widget from buffer.
+    // Wire inspector selector trash button → delete widget from buffer.
     {
         let outline_ref = outline.clone();
-        toolbox.on_delete_widget(move |start, end| {
+        toolbox.inspector.on_delete_widget(move |start, end| {
             outline_ref.delete_child_bytes(start, end);
         });
     }
@@ -2004,8 +2004,8 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
                 .transient_for(&win)
                 .modal(true)
                 .program_name("Rui")
-                .version("0.2.0")
-                .comments("A GTK4 UI designer for Rust developers.")
+                .version("0.3.0")
+                .comments("A GTK4 UI designer for developers, made with Rust.")
                 .license_type(gtk4::License::MitX11);
 
             if let Ok(texture) = gtk4::gdk::Texture::from_filename(&logo_path) {
