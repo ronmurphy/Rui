@@ -722,10 +722,37 @@ impl Palette {
     }
 }
 
+use std::time::{SystemTime, UNIX_EPOCH};
+
+fn inject_unique_id(snippet: &str) -> String {
+    // Find the first <object class="...">
+    if let Some(start) = snippet.find("<object class=\"") {
+        let class_start = start + "<object class=\"".len();
+        if let Some(class_end) = snippet[class_start..].find('"') {
+            let class_name = &snippet[class_start..class_start + class_end];
+            // Only inject if it doesn't already have an ID on that same tag
+            let tag_end = snippet[start..].find('>').unwrap_or(snippet.len() - start);
+            let tag = &snippet[start..start + tag_end];
+            if !tag.contains(" id=") {
+                let ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().subsec_nanos() % 100000;
+                let short_class = class_name.strip_prefix("Gtk").unwrap_or(class_name).to_lowercase();
+                let id_str = format!(" id=\"{}_{}\"", short_class, ts);
+                
+                let insert_pos = class_start + class_end + 1;
+                return format!("{}{}{}", &snippet[..insert_pos], id_str, &snippet[insert_pos..]);
+            }
+        }
+    }
+    snippet.to_string()
+}
+
 /// Insert a widget snippet as a `<child>` of the container surrounding the cursor
 /// (or the canvas-selected widget if `insert_target` is set).
 /// Falls back to raw cursor insertion if no container is found.
 fn insert_snippet(buffer: &sourceview5::Buffer, snippet: &str, insert_target: &InsertTarget) {
+    let injected_snippet = inject_unique_id(snippet);
+    let snippet = injected_snippet.as_str();
+
     let (buf_start, buf_end) = buffer.bounds();
     let full_text = buffer.text(&buf_start, &buf_end, false).to_string();
 

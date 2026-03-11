@@ -313,6 +313,52 @@ impl Inspector {
 
             entries.push((name.clone(), entry));
         }
+
+        // ── Add New Property ─────────────────────────────────────────
+        let sep3 = Separator::new(Orientation::Horizontal);
+        sep3.set_margin_top(6);
+        sep3.set_margin_bottom(6);
+        self.content.append(&sep3);
+
+        let add_lbl = Label::new(Some("Add Property"));
+        add_lbl.set_halign(gtk4::Align::Start);
+        add_lbl.set_margin_start(4);
+        add_lbl.add_css_class("dim-label");
+        self.content.append(&add_lbl);
+
+        let add_box = GtkBox::new(Orientation::Horizontal, 4);
+        add_box.set_margin_start(4);
+        add_box.set_margin_bottom(8);
+
+        let name_entry = Entry::new();
+        name_entry.set_placeholder_text(Some("name"));
+        name_entry.set_hexpand(true);
+
+        let val_entry = Entry::new();
+        val_entry.set_placeholder_text(Some("value"));
+        val_entry.set_hexpand(true);
+
+        let add_btn = gtk4::Button::with_label("+");
+        add_btn.add_css_class("suggested-action");
+
+        add_box.append(&name_entry);
+        add_box.append(&val_entry);
+        add_box.append(&add_btn);
+        self.content.append(&add_box);
+
+        {
+            let buf = buffer.clone();
+            let writing = self.writing.clone();
+            let ne = name_entry.clone();
+            let ve = val_entry.clone();
+            add_btn.connect_clicked(move |_| {
+                let p_name = ne.text().to_string();
+                let p_val = ve.text().to_string();
+                if !p_name.is_empty() {
+                    add_or_write_property(&buf, &p_name, &p_val, &writing);
+                }
+            });
+        }
     }
 
     pub fn toggle(&self) {

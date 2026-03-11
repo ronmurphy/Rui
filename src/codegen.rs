@@ -349,6 +349,7 @@ pub fn companion_path(ui_path: &Path) -> std::path::PathBuf {
 pub fn make_box_template() -> String {
     r#"<?xml version="1.0" encoding="UTF-8"?>
 <interface>
+  <requires lib="gtk" version="4.0"/>
   <object class="GtkBox" id="main_box">
     <property name="orientation">vertical</property>
     <property name="spacing">8</property>
@@ -369,6 +370,7 @@ pub fn make_grid_template(rows: i32, cols: i32) -> String {
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <interface>
+  <requires lib="gtk" version="4.0"/>
   <object class="GtkGrid" id="main_grid">
     <property name="row-spacing">8</property>
     <property name="column-spacing">8</property>
@@ -950,6 +952,7 @@ mod tests {
     fn test_collect_handlers_basic() {
         let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
 <interface>
+  <requires lib="gtk" version="4.0"/>
   <object class="GtkBox" id="main_box">
     <child>
       <object class="GtkButton" id="save_button">

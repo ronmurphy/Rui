@@ -351,8 +351,7 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
     canvas.widget.set_vexpand(true);
     center_nb.append_page(&canvas.widget,  Some(&Label::new(Some("  Design  "))));
     center_nb.append_page(&editor_col,     Some(&Label::new(Some("  Code  "))));
-    center_nb.set_current_page(Some(1)); // start on Code tab
-
+    
     // Re-render the canvas whenever the Design tab becomes visible.
     // This handles the case where the user was on the Code tab (possibly
     // switching editor tabs to a non-.ui file which cleared the canvas),
@@ -376,6 +375,10 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
     left_nb.append_page(&sidebar.widget,  Some(&Label::new(Some("  Files  "))));
     left_nb.append_page(&toolbox.widget,  Some(&Label::new(Some("  Widgets  "))));
     left_nb.append_page(&outline.widget,  Some(&Label::new(Some("  Tree  "))));
+
+    // Default to Designer layout
+    left_nb.set_current_page(Some(1));   // start on Widgets tab
+    center_nb.set_current_page(Some(0)); // start on Design tab
     if !cfg.show_sidebar {
         left_nb.set_visible(false);
     }

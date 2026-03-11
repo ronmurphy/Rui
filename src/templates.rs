@@ -92,6 +92,7 @@ fn grid_xml(rows: i32, cols: i32, children: &str) -> String {
     format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
          <interface>\n\
+           <requires lib=\"gtk\" version=\"4.0\"/>\n\
            <object class=\"GtkGrid\" id=\"main_grid\">\n\
              <property name=\"row-spacing\">8</property>\n\
              <property name=\"column-spacing\">8</property>\n\
