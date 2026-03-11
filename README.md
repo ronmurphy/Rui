@@ -7,25 +7,30 @@
 
 Rui (said like "Rooey" — **R** for Rust + **UI**) is a native GTK4 application for visually designing `.ui` files used by GTK/Libadwaita Rust applications. It aims to be the missing GUI builder in the Rust desktop ecosystem.
 
-## What It Does Today (v0.1)
+## What It Does Today (v0.2)
 
 - Syntax-highlighted `.ui` / XML editing (GtkSourceView 5)
-- Tabbed editor with file tree sidebar
+- Tabbed editor with file tree sidebar and widget outline tree
 - Find/replace with regex
 - Session persistence (remembers open files and layout)
 - Built-in dark theme (Catppuccin Mocha)
 - Run scripts directly from the editor
-- AI chat panel (Claude, ChatGPT, Gemini, Codex) with persistent sessions
 - **Live Canvas** — renders `.ui` XML in a side pane as you type (500ms debounce)
 - **Widget Palette** — 30 GTK4 widgets across 5 categories, click to insert XML
 - **Property Inspector** — edit widget properties visually, writes back to XML in real-time
 - **Toolbox** — palette + inspector in one resizable panel
 - **Layout Modes** — Code View (Ctrl+1) and Designer View (Ctrl+2), persisted across sessions
+- **Code Generation** — emit idiomatic Rust handler stubs from `.ui` files
+- **Drag & Drop** — drag widgets on the canvas to reorder; drag from palette to insert
+- **GtkGrid Designer** — right-click to set column/row/span; grid placeholder cells
+- **Undo/Redo** — full designer history with crash recovery
+- **Claude Code Panel** — embedded AI assistant with live `.ui` + companion `.rs` context; apply code blocks directly to files
 
 ## What's Next
 
-- **Code Generation** — emit idiomatic Rust bindings from `.ui` files
-- **Drag-and-drop** — place widgets visually on the canvas
+- Grid merge-mode UI (select cells → apply column/row span)
+- New project dialog with grid dimensions
+- Theme selector
 
 ## Building
 
