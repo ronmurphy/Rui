@@ -1,7 +1,7 @@
 <img width="152" height="152" alt="Rui" src="https://github.com/user-attachments/assets/219da171-2664-4761-8ae0-f6744c846aa5" />
 
 # Rui — A GTK4 UI Designer for Rust
-<img width="1200" height="830" alt="Screenshot_20260308_190813" src="https://github.com/user-attachments/assets/3d1c96c5-85c1-47d5-ba91-93750e218694" />
+<img width="1761" height="962" alt="Screenshot_20260311_003053" src="https://github.com/user-attachments/assets/e9055e57-5570-4523-8b03-d0146cc7c76e" />
 
 > **Status: Early Foundation** — This project is being built as a starting point, not a long-term commitment. If you find it useful and want to take it further, we're actively looking for contributors and future maintainers.
 
