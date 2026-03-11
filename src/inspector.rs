@@ -491,21 +491,44 @@ impl Inspector {
                     .build();
                 let lb = ListBox::new();
 
-                // Populate from icon theme
+                // Populate from icon theme — each row: [Image  Label]
                 if let Some(display) = gtk4::gdk::Display::default() {
                     let theme = IconTheme::for_display(&display);
                     let mut names = theme.icon_names();
                     names.sort();
                     for icon_name in &names {
+                        let img = gtk4::Image::from_icon_name(icon_name.as_str());
+                        img.set_pixel_size(20);
+                        img.set_margin_end(6);
+
                         let lbl = Label::new(Some(icon_name.as_str()));
                         lbl.set_halign(gtk4::Align::Start);
+                        lbl.set_hexpand(true);
+
+                        let row_box = GtkBox::new(Orientation::Horizontal, 0);
+                        row_box.set_margin_start(4);
+                        row_box.set_margin_end(4);
+                        row_box.set_margin_top(2);
+                        row_box.set_margin_bottom(2);
+                        row_box.append(&img);
+                        row_box.append(&lbl);
+
                         let r = ListBoxRow::new();
-                        r.set_child(Some(&lbl));
+                        r.set_child(Some(&row_box));
                         lb.append(&r);
                     }
                 }
 
-                // Live filter
+                // Helper: extract icon name string from a row's child box
+                let icon_name_from_row = |r: &ListBoxRow| -> Option<gtk4::glib::GString> {
+                    r.child()
+                        .and_then(|c| c.downcast::<GtkBox>().ok())
+                        .and_then(|b| b.last_child())
+                        .and_then(|c| c.downcast::<Label>().ok())
+                        .map(|l| l.text())
+                };
+
+                // Live filter — match against the label text inside the row box
                 let filter_query: Rc<RefCell<String>> = Rc::new(RefCell::new(String::new()));
                 lb.set_filter_func({
                     let q = filter_query.clone();
@@ -513,6 +536,8 @@ impl Inspector {
                         let q = q.borrow();
                         if q.is_empty() { return true; }
                         row.child()
+                            .and_then(|c| c.downcast::<GtkBox>().ok())
+                            .and_then(|b| b.last_child())
                             .and_then(|c| c.downcast::<Label>().ok())
                             .map(|l| l.text().to_ascii_lowercase().contains(q.as_str()))
                             .unwrap_or(false)
@@ -541,8 +566,7 @@ impl Inspector {
                     let prop_name = name.to_string();
                     let writing = self.writing.clone();
                     lb.connect_row_activated(move |_, r| {
-                        if let Some(lbl) = r.child().and_then(|c| c.downcast::<Label>().ok()) {
-                            let icon = lbl.text();
+                        if let Some(icon) = icon_name_from_row(r) {
                             ie_ref.set_text(&icon);
                             write_property_by_name(&buf, &prop_name, &icon, &writing);
                         }
