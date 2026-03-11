@@ -659,11 +659,13 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         });
     }
 
-    // Wire toolbox selector combo selection → green canvas highlight.
+    // Wire toolbox selector combo selection → canvas highlight + inspector.
     {
-        let canvas_ref = canvas.clone();
+        let canvas_ref   = canvas.clone();
+        let inspector_ref = toolbox.inspector.clone();
         toolbox.on_select_widget(move |byte_offset| {
             canvas_ref.select_from_tree(byte_offset);
+            inspector_ref.update_from_offset(byte_offset);
         });
     }
 

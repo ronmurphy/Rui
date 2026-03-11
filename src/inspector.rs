@@ -99,6 +99,30 @@ impl Inspector {
         });
     }
 
+    /// Show properties for the widget at the given byte offset.
+    /// Also moves the buffer cursor there so subsequent property edits target the right widget.
+    pub fn update_from_offset(&self, byte_offset: usize) {
+        let buf = match self.target_buffer.borrow().as_ref().cloned() {
+            Some(b) => b,
+            None => return,
+        };
+        let (start, end) = buf.bounds();
+        let full_text = buf.text(&start, &end, false).to_string();
+        let safe = byte_offset.min(full_text.len());
+
+        if let Some(info) = find_object_at_offset(&full_text, safe) {
+            // Move cursor into the object block so property writes land in the right place.
+            // Suppress the cursor-notify handler to avoid a redundant re-render.
+            self.writing.set(true);
+            let char_offset = full_text[..safe].chars().count();
+            let iter = buf.iter_at_offset(char_offset as i32);
+            buf.place_cursor(&iter);
+            self.writing.set(false);
+
+            self.show_widget_info(&buf, &info);
+        }
+    }
+
     /// Re-read the XML around the cursor and rebuild the property panel.
     fn update_from_cursor(&self, buffer: &sourceview5::Buffer) {
         let (start, end) = buffer.bounds();
