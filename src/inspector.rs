@@ -57,7 +57,6 @@ impl Inspector {
             .build();
 
         let widget = GtkBox::new(Orientation::Vertical, 0);
-        widget.set_width_request(220);
         widget.append(&header_label);
         widget.append(&scroll);
 
@@ -257,18 +256,33 @@ impl Inspector {
 
         self.content.append(&grid);
 
-        // ── Editable property rows (skip the 4 above) ────────────────
+        // ── Editable property rows — 2-column layout ─────────────────
         let sep2 = Separator::new(Orientation::Horizontal);
         sep2.set_margin_top(2);
         sep2.set_margin_bottom(4);
         self.content.append(&sep2);
 
+        // Collect the properties we'll display (skip the 4 shown above)
+        let displayable: Vec<_> = info.properties.iter()
+            .filter(|(name, ..)| !matches!(name.as_str(), "halign" | "valign" | "hexpand" | "vexpand"))
+            .collect();
+
+        // Two equal-width columns in a horizontal box
+        let columns = GtkBox::new(Orientation::Horizontal, 4);
+        columns.set_margin_start(2);
+        columns.set_margin_end(2);
+
+        let col_left  = GtkBox::new(Orientation::Vertical, 2);
+        let col_right = GtkBox::new(Orientation::Vertical, 2);
+        col_left.set_hexpand(true);
+        col_right.set_hexpand(true);
+        columns.append(&col_left);
+        columns.append(&col_right);
+        self.content.append(&columns);
+
         let mut entries = self.entries.borrow_mut();
-        for (name, value, _val_start, _val_end) in &info.properties {
-            // Already shown as special controls above
-            if matches!(name.as_str(), "halign" | "valign" | "hexpand" | "vexpand") {
-                continue;
-            }
+        for (i, (name, value, _val_start, _val_end)) in displayable.iter().enumerate() {
+            let col = if i % 2 == 0 { &col_left } else { &col_right };
 
             let row = GtkBox::new(Orientation::Vertical, 1);
             row.set_margin_top(2);
@@ -276,7 +290,7 @@ impl Inspector {
 
             let name_label = Label::new(Some(name));
             name_label.set_halign(gtk4::Align::Start);
-            name_label.set_margin_start(4);
+            name_label.set_margin_start(2);
             name_label.add_css_class("dim-label");
 
             let entry = Entry::new();
@@ -285,11 +299,11 @@ impl Inspector {
 
             row.append(&name_label);
             row.append(&entry);
-            self.content.append(&row);
+            col.append(&row);
 
             {
                 let buf = buffer.clone();
-                let prop_name = name.clone();
+                let prop_name = name.to_string();
                 let entry_clone = entry.clone();
                 let writing = self.writing.clone();
                 entry.connect_activate(move |_| {
@@ -298,7 +312,7 @@ impl Inspector {
             }
             {
                 let buf2 = buffer.clone();
-                let prop_name2 = name.clone();
+                let prop_name2 = name.to_string();
                 let entry2 = entry.clone();
                 let clearing = self.clearing.clone();
                 let writing = self.writing.clone();
@@ -311,7 +325,7 @@ impl Inspector {
                 entry.add_controller(focus);
             }
 
-            entries.push((name.clone(), entry));
+            entries.push((name.to_string(), entry));
         }
 
         // ── Add New Property ─────────────────────────────────────────
