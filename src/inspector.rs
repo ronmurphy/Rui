@@ -392,39 +392,64 @@ impl Inspector {
             name_label.set_margin_start(2);
             name_label.add_css_class("dim-label");
 
-            let entry = Entry::new();
-            entry.set_text(value);
-            entry.add_css_class("monospace");
-
             row.append(&name_label);
-            row.append(&entry);
+
+            let trimmed = value.trim();
+            if let Some(opts) = enum_options_for(name, trimmed) {
+                // Known enum property — use a DropDown
+                let selected = opts.iter().position(|&o| o == trimmed).unwrap_or(0) as u32;
+                let dd = DropDown::new(
+                    Some(StringList::new(opts)),
+                    gtk4::Expression::NONE,
+                );
+                dd.set_selected(selected);
+                {
+                    let buf = buffer.clone();
+                    let prop_name = name.to_string();
+                    let writing = self.writing.clone();
+                    let opts_static = opts;
+                    dd.connect_selected_notify(move |dd| {
+                        let idx = dd.selected() as usize;
+                        let val = opts_static.get(idx).copied().unwrap_or("");
+                        write_property_by_name(&buf, &prop_name, val, &writing);
+                    });
+                }
+                row.append(&dd);
+            } else {
+                let entry = Entry::new();
+                entry.set_text(value);
+                entry.add_css_class("monospace");
+
+                row.append(&entry);
+
+                {
+                    let buf = buffer.clone();
+                    let prop_name = name.to_string();
+                    let entry_clone = entry.clone();
+                    let writing = self.writing.clone();
+                    entry.connect_activate(move |_| {
+                        write_property_by_name(&buf, &prop_name, &entry_clone.text(), &writing);
+                    });
+                }
+                {
+                    let buf2 = buffer.clone();
+                    let prop_name2 = name.to_string();
+                    let entry2 = entry.clone();
+                    let clearing = self.clearing.clone();
+                    let writing = self.writing.clone();
+                    let focus = gtk4::EventControllerFocus::new();
+                    focus.connect_leave(move |_| {
+                        if !clearing.get() && !writing.get() {
+                            write_property_by_name(&buf2, &prop_name2, &entry2.text(), &writing);
+                        }
+                    });
+                    entry.add_controller(focus);
+                }
+
+                entries.push((name.to_string(), entry));
+            }
+
             col.append(&row);
-
-            {
-                let buf = buffer.clone();
-                let prop_name = name.to_string();
-                let entry_clone = entry.clone();
-                let writing = self.writing.clone();
-                entry.connect_activate(move |_| {
-                    write_property_by_name(&buf, &prop_name, &entry_clone.text(), &writing);
-                });
-            }
-            {
-                let buf2 = buffer.clone();
-                let prop_name2 = name.to_string();
-                let entry2 = entry.clone();
-                let clearing = self.clearing.clone();
-                let writing = self.writing.clone();
-                let focus = gtk4::EventControllerFocus::new();
-                focus.connect_leave(move |_| {
-                    if !clearing.get() && !writing.get() {
-                        write_property_by_name(&buf2, &prop_name2, &entry2.text(), &writing);
-                    }
-                });
-                entry.add_controller(focus);
-            }
-
-            entries.push((name.to_string(), entry));
         }
 
         // ── Add New Property ─────────────────────────────────────────
@@ -781,6 +806,120 @@ fn snap_to_char_boundary(s: &str, offset: usize) -> usize {
         pos -= 1;
     }
     pos
+}
+
+/// Return the fixed set of valid values for well-known GTK4 enum properties,
+/// or `None` if the property takes free-form text.
+fn enum_options_for(prop_name: &str, current_value: &str) -> Option<&'static [&'static str]> {
+    // Normalise property name (GTK uses both - and _ in .ui files)
+    let name = prop_name.replace('-', "_");
+    match name.as_str() {
+        // ── Explicitly-named boolean properties ──────────────────────
+        "visible" | "sensitive" | "can_focus" | "can_target" | "receives_default"
+        | "focus_on_click" | "use_underline" | "use_markup" | "wrap" | "selectable"
+        | "editable" | "activates_default" | "overwrite_mode" | "truncate_multiline"
+        | "resizable" | "reorderable" | "show_tabs" | "scrollable" | "homogeneous"
+        | "numeric" | "snap_to_ticks" | "has_frame" | "has_tooltip"
+        | "accept_tab" | "cursor_visible" | "monospace" | "overlay_scrolling"
+        | "enable_undo" | "show_border" | "no_show_all" | "expand"
+        => Some(&["true", "false"]),
+
+        // Catch any property whose live value is already a boolean
+        _ if current_value == "true" || current_value == "false"
+            => Some(&["true", "false"]),
+
+        // ── Orientation ──────────────────────────────────────────────
+        "orientation" => Some(&["horizontal", "vertical"]),
+
+        // ── Alignment ────────────────────────────────────────────────
+        "halign" | "valign" => Some(&["fill", "start", "center", "end", "baseline"]),
+
+        // ── Justify ──────────────────────────────────────────────────
+        "justify" => Some(&["left", "right", "center", "fill"]),
+
+        // ── Wrap mode ────────────────────────────────────────────────
+        "wrap_mode" => Some(&["none", "char", "word", "word_char"]),
+
+        // ── Ellipsize ────────────────────────────────────────────────
+        "ellipsize" => Some(&["none", "start", "middle", "end"]),
+
+        // ── Scrollbar policy ─────────────────────────────────────────
+        "hscrollbar_policy" | "vscrollbar_policy"
+            => Some(&["always", "automatic", "never", "external"]),
+
+        // ── Shadow / frame type ──────────────────────────────────────
+        "shadow_type" => Some(&["none", "in", "out", "etched_in", "etched_out"]),
+
+        // ── Notebook tab position ─────────────────────────────────────
+        "tab_pos" => Some(&["top", "bottom", "left", "right"]),
+
+        // ── Icon size ────────────────────────────────────────────────
+        "icon_size" => Some(&["inherit", "normal", "large"]),
+
+        // ── Pack type ────────────────────────────────────────────────
+        "pack_type" => Some(&["start", "end"]),
+
+        // ── Overflow ─────────────────────────────────────────────────
+        "overflow" => Some(&["visible", "hidden"]),
+
+        // ── Baseline position ─────────────────────────────────────────
+        "baseline_position" => Some(&["top", "center", "bottom"]),
+
+        // ── Selection mode ────────────────────────────────────────────
+        "selection_mode" => Some(&["none", "single", "browse", "multiple"]),
+
+        // ── Toolbar style ─────────────────────────────────────────────
+        "toolbar_style" => Some(&["icons", "text", "both", "both_horiz"]),
+
+        // ── Message type (InfoBar) ────────────────────────────────────
+        "message_type" => Some(&["info", "warning", "question", "error", "other"]),
+
+        // ── Response type ─────────────────────────────────────────────
+        "response_type" => Some(&["none", "reject", "accept", "delete_event",
+                                  "ok", "cancel", "close", "yes", "no", "apply", "help"]),
+
+        // ── Button relief ─────────────────────────────────────────────
+        "relief" => Some(&["normal", "none"]),
+
+        // ── Text input purpose (Entry / SpinButton) ───────────────────
+        "input_purpose" => Some(&["free_form", "alpha", "digits", "number",
+                                  "phone", "url", "email", "name",
+                                  "password", "pin", "terminal"]),
+
+        // ── SpinButton update policy ──────────────────────────────────
+        "update_policy" => Some(&["always", "if_valid"]),
+
+        // ── Stack / Revealer transition type ──────────────────────────
+        "transition_type" => Some(&["none", "crossfade",
+                                    "slide_right", "slide_left",
+                                    "slide_up", "slide_down",
+                                    "slide_left_right", "slide_up_down",
+                                    "over_up", "over_down",
+                                    "over_left", "over_right",
+                                    "under_up", "under_down",
+                                    "under_left", "under_right",
+                                    "over_up_down", "over_down_up",
+                                    "over_left_right", "over_right_left",
+                                    "rotate_left", "rotate_right",
+                                    "rotate_left_right"]),
+
+        // ── Picture content fit ───────────────────────────────────────
+        "content_fit" => Some(&["fill", "contain", "cover", "scale_down"]),
+
+        // ── Scrolled window corner placement ──────────────────────────
+        "window_placement" => Some(&["top_left", "bottom_left", "top_right", "bottom_right"]),
+
+        // ── Sort order ────────────────────────────────────────────────
+        "sort_type" => Some(&["ascending", "descending"]),
+
+        // ── Level bar mode ────────────────────────────────────────────
+        "level_bar_mode" => Some(&["continuous", "discrete"]),
+
+        // ── Size group mode ───────────────────────────────────────────
+        "size_group_mode" => Some(&["none", "horizontal", "vertical", "both"]),
+
+        _ => None,
+    }
 }
 
 fn make_label_row(label: &str, value: &str) -> GtkBox {
