@@ -87,6 +87,15 @@ Forked from rdm-editor, now its own project with its own identity.
 - Window extends to accommodate the panel on open, shrinks on close
 - Running Claude process is killed cleanly on app shutdown
 
+#### API AI Chat Panel — `ai_chat_panel.rs` + `ai_provider.rs`
+- Native multi-provider AI chat sidebar — no external CLI required
+- Supports **OpenAI** (gpt-4o etc.), **Anthropic** (claude-3-5-sonnet etc.), **Google Gemini** (gemini-2.0-flash etc.), and any **OpenAI-compatible** endpoint (Ollama, Groq, Mistral, …)
+- Configured via ⚙ gear button in the panel header: provider dropdown, model field, API key (masked), base URL for compat
+- Config persisted to `~/.config/rui/rui.toml` under `[ai]`
+- Same streaming + Apply buttons pattern as Claude Code panel
+- Same window-widening contract (adds/removes `SIDEBAR_WIDTH` from window on toggle)
+- Toggle via AI → Open API Chat… menu item
+
 #### Layout Modes
 - **Code View** (Ctrl+1): Full sidebar, minimap, output — no canvas/toolbox
 - **Designer View** (Ctrl+2): Sidebar, canvas, toolbox visible — no minimap
@@ -133,6 +142,8 @@ Forked from rdm-editor, now its own project with its own identity.
 | `history.rs` | Designer undo/redo + crash recovery |
 | `outline.rs` | Widget hierarchy tree panel |
 | `claude_code.rs` | Embedded Claude Code AI chat panel |
+| `ai_provider.rs` | Multi-provider API backend (OpenAI / Anthropic / Gemini / compat) |
+| `ai_chat_panel.rs` | Native API-key AI chat panel with gear config popover |
 | `templates.rs` | Template library |
 
 ---
@@ -141,7 +152,7 @@ Forked from rdm-editor, now its own project with its own identity.
 
 ```sh
 # Install deps (Arch)
-sudo pacman -S gtk4 gtksourceview5 webkit2gtk-6.0
+sudo pacman -S gtk4 gtksourceview5 webkitgtk-6.0
 
 # Build
 cargo build --release
@@ -157,8 +168,8 @@ cargo build --release --no-default-features
 
 ## What's Next
 
-- [ ] Grid merge-mode UI — checkbox overlay per cell, select rectangle → apply column/row span
-- [ ] New project dialog with grid dimension input (rows × cols)
-- [ ] Delete selected widget with Del key
-- [ ] Theme selector (beyond Catppuccin Mocha)
+- [x] Grid merge-mode UI — checkbox overlay per cell, select rectangle → apply column/row span
+- [x] New project dialog with grid dimension input (rows × cols)
+- [x] Delete selected widget with Del key
+- [x] Theme selector — not needed; Rui follows the system GTK theme automatically
 - [ ] Contributors welcome — see ARCHITECTURE.md for module guide

@@ -7,13 +7,13 @@
 
 Rui (said like "Rooey" — **R** for Rust + **UI**) is a native GTK4 application for visually designing `.ui` files used by GTK/Libadwaita Rust applications. It aims to be the missing GUI builder in the Rust desktop ecosystem.
 
-## What It Does Today (v0.2)
+## What It Does Today (v0.3)
 
 - Syntax-highlighted `.ui` / XML editing (GtkSourceView 5)
 - Tabbed editor with file tree sidebar and widget outline tree
 - Find/replace with regex
 - Session persistence (remembers open files and layout)
-- Built-in dark theme (Catppuccin Mocha)
+- Built-in dark theme (Catppuccin Mocha); follows system GTK theme
 - Run scripts directly from the editor
 - **Live Canvas** — renders `.ui` XML in a side pane as you type (500ms debounce)
 - **Widget Palette** — 30 GTK4 widgets across 5 categories, click to insert XML
@@ -22,15 +22,16 @@ Rui (said like "Rooey" — **R** for Rust + **UI**) is a native GTK4 application
 - **Layout Modes** — Code View (Ctrl+1) and Designer View (Ctrl+2), persisted across sessions
 - **Code Generation** — emit idiomatic Rust handler stubs from `.ui` files
 - **Drag & Drop** — drag widgets on the canvas to reorder; drag from palette to insert
-- **GtkGrid Designer** — right-click to set column/row/span; grid placeholder cells
+- **GtkGrid Designer** — right-click to set column/row/span; grid placeholder cells; **merge-mode** (select cells → apply span)
+- **New Project Dialog** — with grid dimension input (rows × cols)
+- **Delete Widget** — remove the selected widget with the `Del` key
 - **Undo/Redo** — full designer history with crash recovery
 - **Claude Code Panel** — embedded AI assistant with live `.ui` + companion `.rs` context; apply code blocks directly to files
+- **API AI Chat Panel** — native multi-provider chat (OpenAI, Anthropic, Gemini, OpenAI-compat); no CLI required, configured via ⚙ gear button; direct API key auth; streams responses with Apply buttons
 
 ## What's Next
 
-- Grid merge-mode UI (select cells → apply column/row span)
-- New project dialog with grid dimensions
-- Theme selector
+- Contributors welcome — see [ARCHITECTURE.md](ARCHITECTURE.md) for the module guide
 
 ## Building
 

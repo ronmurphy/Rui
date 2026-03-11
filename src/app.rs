@@ -16,6 +16,7 @@ use crate::help;
 use crate::menubar;
 use crate::canvas::Canvas;
 use crate::claude_code::ClaudeCodePanel;
+use crate::ai_chat_panel::AiChatPanel;
 use crate::outline::OutlinePanel;
 use crate::toolbox::Toolbox;
 
@@ -68,6 +69,7 @@ struct AppState {
     ai_sidebar: crate::ai_panel::AiSidebar,
 
     claude_panel: ClaudeCodePanel,
+    ai_chat_panel: AiChatPanel,
 
     main_paned: Paned,
     vert_paned: Paned,
@@ -390,8 +392,11 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
     // ── Claude Code panel (native CLI chat, always available) ─────
     let claude_panel = ClaudeCodePanel::new();
 
-    // Wrap center_nb + AI sidebar + Claude panel in a horizontal box so
-    // sidebars appear to the right of the designer/code area.
+    // ── API Chat panel (multi-provider, key-based, no CLI required) ──
+    let ai_chat_panel = AiChatPanel::new();
+
+    // Wrap center_nb + AI sidebar + Claude panel + API chat panel in a
+    // horizontal box so sidebars appear to the right of the designer area.
     let center_area = GtkBox::new(Orientation::Horizontal, 0);
     center_area.set_hexpand(true);
     center_area.set_vexpand(true);
@@ -399,6 +404,7 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
     #[cfg(feature = "preview")]
     center_area.append(&ai_sidebar.widget);
     center_area.append(&claude_panel.widget);
+    center_area.append(&ai_chat_panel.widget);
 
     let main_paned = Paned::new(Orientation::Horizontal);
     main_paned.set_start_child(Some(&left_nb));
@@ -454,7 +460,8 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         preview:   preview.clone(),
         #[cfg(feature = "preview")]
         ai_sidebar: ai_sidebar.clone(),
-        claude_panel: claude_panel.clone(),
+        claude_panel:   claude_panel.clone(),
+        ai_chat_panel:  ai_chat_panel.clone(),
     }));
 
     // Populate MRU menus from saved state.
@@ -1564,6 +1571,24 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         });
     }
 
+    // AI → Open API Chat (toggle panel, resize window)
+    {
+        let st = state.clone();
+        menubar::connect_action(app, "api-chat-open", move || {
+            let s = st.borrow();
+            let now_visible = s.ai_chat_panel.toggle();
+            let win = &s.window;
+            let cur_w = win.width();
+            let cur_h = win.height();
+            let delta = crate::ai_chat_panel::SIDEBAR_WIDTH;
+            if now_visible {
+                win.set_default_size(cur_w + delta, cur_h);
+            } else {
+                win.set_default_size((cur_w - delta).max(800), cur_h);
+            }
+        });
+    }
+
     // Wire Claude Code callbacks.
     {
         let st = state.clone();
@@ -1635,6 +1660,81 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
                 }
             } else {
                 // No .ui file open — just open a new tab with the rust code.
+                s.notebook.new_tab(&s.cfg);
+                if let Some(tab) = s.notebook.current_tab() {
+                    tab.buffer().set_text(code);
+                    if let Some(lang) = sourceview5::LanguageManager::default().language("rust") {
+                        tab.buffer().set_language(Some(&lang));
+                    }
+                }
+            }
+        });
+    }
+
+    // Wire API Chat panel callbacks (mirrors Claude Code panel).
+    {
+        let st = state.clone();
+        ai_chat_panel.on_get_buffer(move || {
+            let s = st.borrow();
+            s.notebook.current_tab().map(|tab| {
+                let buf = tab.buffer();
+                let (start, end) = buf.bounds();
+                buf.text(&start, &end, false).to_string()
+            })
+        });
+    }
+    {
+        let st = state.clone();
+        ai_chat_panel.on_get_path(move || {
+            let s = st.borrow();
+            s.notebook.current_tab()
+                .and_then(|tab| tab.path())
+                .map(|p| p.display().to_string())
+        });
+    }
+    {
+        let st = state.clone();
+        ai_chat_panel.on_get_companion(move || {
+            let s = st.borrow();
+            let tab = s.notebook.current_tab()?;
+            let ui_path = tab.path().filter(|p| Canvas::is_ui_file(p))?;
+            let companion = crate::codegen::companion_path(&ui_path);
+            let content = std::fs::read_to_string(&companion).ok()?;
+            Some((companion.display().to_string(), content))
+        });
+    }
+    {
+        let st = state.clone();
+        ai_chat_panel.on_apply_xml(move |code| {
+            let s = st.borrow();
+            if let Some(tab) = s.notebook.current_tab() {
+                tab.buffer().set_text(code);
+            }
+        });
+    }
+    {
+        let st = state.clone();
+        ai_chat_panel.on_apply_rs(move |code| {
+            let s = st.borrow();
+            let companion = s.notebook.current_tab()
+                .and_then(|t| t.path())
+                .filter(|p| Canvas::is_ui_file(p))
+                .map(|p| crate::codegen::companion_path(&p));
+
+            if let Some(companion) = companion {
+                if let Err(e) = std::fs::write(&companion, code) {
+                    log::error!("Failed to write companion: {}", e);
+                    return;
+                }
+                s.notebook.open_file(&companion, &s.cfg);
+                if let Some(tab) = s.notebook.current_tab() {
+                    tab.buffer().set_text(code);
+                    tab.buffer().set_modified(false);
+                    *tab.last_mtime.borrow_mut() = std::fs::metadata(&companion)
+                        .ok()
+                        .and_then(|m| m.modified().ok());
+                }
+            } else {
                 s.notebook.new_tab(&s.cfg);
                 if let Some(tab) = s.notebook.current_tab() {
                     tab.buffer().set_text(code);

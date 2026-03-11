@@ -60,9 +60,11 @@ impl Default for EditorConfig {
 
 /// Top-level config file structure (rui.toml).
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
-struct RuiConfig {
+pub struct RuiConfig {
     #[serde(default)]
-    editor: EditorConfig,
+    pub editor: EditorConfig,
+    #[serde(default)]
+    pub ai: crate::ai_provider::AiConfig,
 }
 
 fn config_path() -> PathBuf {
@@ -81,6 +83,29 @@ pub fn load() -> EditorConfig {
             cfg.editor
         }
         Err(_) => EditorConfig::default(),
+    }
+}
+
+/// Load AI provider configuration from rui.toml.
+pub fn load_ai_config() -> crate::ai_provider::AiConfig {
+    let path = config_path();
+    match std::fs::read_to_string(&path) {
+        Ok(text) => {
+            let cfg: RuiConfig = toml::from_str(&text).unwrap_or_default();
+            cfg.ai
+        }
+        Err(_) => crate::ai_provider::AiConfig::default(),
+    }
+}
+
+/// Persist AI provider configuration back to rui.toml.
+pub fn save_ai_config(ai: &crate::ai_provider::AiConfig) {
+    let path = config_path();
+    let editor = load();
+    let cfg = RuiConfig { editor, ai: ai.clone() };
+    if let Ok(text) = toml::to_string_pretty(&cfg) {
+        let _ = std::fs::create_dir_all(path.parent().unwrap_or(std::path::Path::new("/tmp")));
+        let _ = std::fs::write(&path, text);
     }
 }
 
