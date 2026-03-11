@@ -7,8 +7,9 @@
 
 use gtk4::prelude::*;
 use gtk4::{
-    Box as GtkBox, Button, CheckButton, DropDown, Entry, Grid, Label, Orientation,
-    ScrolledWindow, Separator, StringList,
+    Adjustment, Box as GtkBox, Button, CheckButton, ColorDialog, ColorDialogButton,
+    DropDown, Entry, Grid, IconTheme, Label, ListBox, ListBoxRow, Orientation,
+    Popover, ScrolledWindow, SearchEntry, Separator, SpinButton, StringList,
 };
 use sourceview5::prelude::*;
 use std::cell::{Cell, RefCell};
@@ -387,16 +388,202 @@ impl Inspector {
             row.set_margin_top(2);
             row.set_margin_bottom(2);
 
+            // ── Header: name label + × delete button ─────────────────
+            let header_row = GtkBox::new(Orientation::Horizontal, 0);
             let name_label = Label::new(Some(name));
             name_label.set_halign(gtk4::Align::Start);
+            name_label.set_hexpand(true);
             name_label.set_margin_start(2);
             name_label.add_css_class("dim-label");
 
-            row.append(&name_label);
+            let del_btn = Button::from_icon_name("list-remove-symbolic");
+            del_btn.add_css_class("flat");
+            del_btn.set_valign(gtk4::Align::Center);
+            del_btn.set_tooltip_text(Some("Remove property"));
+            {
+                let buf = buffer.clone();
+                let prop_name = name.to_string();
+                let writing = self.writing.clone();
+                del_btn.connect_clicked(move |_| {
+                    delete_property_by_name(&buf, &prop_name, &writing);
+                });
+            }
+            header_row.append(&name_label);
+            header_row.append(&del_btn);
+            row.append(&header_row);
 
+            // ── Input widget ─────────────────────────────────────────
             let trimmed = value.trim();
-            if let Some(opts) = enum_options_for(name, trimmed) {
-                // Known enum property — use a DropDown
+            let norm = name.replace('-', "_");
+
+            if looks_like_color(&norm, trimmed) {
+                // Color property — ColorDialogButton
+                let cd = ColorDialog::builder().with_alpha(true).build();
+                let cb = ColorDialogButton::new(Some(cd));
+                let rgba = gtk4::gdk::RGBA::parse(trimmed)
+                    .unwrap_or(gtk4::gdk::RGBA::new(0.0, 0.0, 0.0, 1.0));
+                cb.set_rgba(&rgba);
+                {
+                    let buf = buffer.clone();
+                    let prop_name = name.to_string();
+                    let writing = self.writing.clone();
+                    cb.connect_rgba_notify(move |b| {
+                        write_property_by_name(&buf, &prop_name, &b.rgba().to_string(), &writing);
+                    });
+                }
+                row.append(&cb);
+
+            } else if norm == "icon_name" {
+                // Icon name — Entry + browse popover
+                let ie = Entry::new();
+                ie.set_text(value);
+                ie.set_hexpand(true);
+
+                let pick_btn = Button::with_label("…");
+                pick_btn.add_css_class("flat");
+                pick_btn.set_tooltip_text(Some("Browse icons"));
+
+                let ih = GtkBox::new(Orientation::Horizontal, 2);
+                ih.append(&ie);
+                ih.append(&pick_btn);
+                row.append(&ih);
+
+                // Entry write callbacks
+                {
+                    let buf = buffer.clone();
+                    let prop_name = name.to_string();
+                    let ie2 = ie.clone();
+                    let writing = self.writing.clone();
+                    ie.connect_activate(move |_| {
+                        write_property_by_name(&buf, &prop_name, &ie2.text(), &writing);
+                    });
+                }
+                {
+                    let buf2 = buffer.clone();
+                    let prop_name2 = name.to_string();
+                    let ie3 = ie.clone();
+                    let clearing = self.clearing.clone();
+                    let writing = self.writing.clone();
+                    let focus = gtk4::EventControllerFocus::new();
+                    focus.connect_leave(move |_| {
+                        if !clearing.get() && !writing.get() {
+                            write_property_by_name(&buf2, &prop_name2, &ie3.text(), &writing);
+                        }
+                    });
+                    ie.add_controller(focus);
+                }
+
+                // Build icon picker popover
+                let pop = Popover::new();
+                let pop_box = GtkBox::new(Orientation::Vertical, 4);
+                pop_box.set_margin_start(8);
+                pop_box.set_margin_end(8);
+                pop_box.set_margin_top(8);
+                pop_box.set_margin_bottom(8);
+
+                let search = SearchEntry::new();
+                search.set_placeholder_text(Some("Filter icons…"));
+
+                let icon_scroll = ScrolledWindow::builder()
+                    .min_content_height(220)
+                    .min_content_width(200)
+                    .vexpand(true)
+                    .build();
+                let lb = ListBox::new();
+
+                // Populate from icon theme
+                if let Some(display) = gtk4::gdk::Display::default() {
+                    let theme = IconTheme::for_display(&display);
+                    let mut names = theme.icon_names();
+                    names.sort();
+                    for icon_name in &names {
+                        let lbl = Label::new(Some(icon_name.as_str()));
+                        lbl.set_halign(gtk4::Align::Start);
+                        let r = ListBoxRow::new();
+                        r.set_child(Some(&lbl));
+                        lb.append(&r);
+                    }
+                }
+
+                // Live filter
+                let filter_query: Rc<RefCell<String>> = Rc::new(RefCell::new(String::new()));
+                lb.set_filter_func({
+                    let q = filter_query.clone();
+                    move |row| {
+                        let q = q.borrow();
+                        if q.is_empty() { return true; }
+                        row.child()
+                            .and_then(|c| c.downcast::<Label>().ok())
+                            .map(|l| l.text().to_ascii_lowercase().contains(q.as_str()))
+                            .unwrap_or(false)
+                    }
+                });
+                {
+                    let lb_ref = lb.clone();
+                    let fq = filter_query.clone();
+                    search.connect_search_changed(move |s| {
+                        *fq.borrow_mut() = s.text().to_ascii_lowercase().to_string();
+                        lb_ref.invalidate_filter();
+                    });
+                }
+
+                icon_scroll.set_child(Some(&lb));
+                pop_box.append(&search);
+                pop_box.append(&icon_scroll);
+                pop.set_child(Some(&pop_box));
+                pop.set_parent(&pick_btn);
+
+                // Row activated: fill entry and close popover
+                {
+                    let ie_ref = ie.clone();
+                    let pop_ref = pop.clone();
+                    let buf = buffer.clone();
+                    let prop_name = name.to_string();
+                    let writing = self.writing.clone();
+                    lb.connect_row_activated(move |_, r| {
+                        if let Some(lbl) = r.child().and_then(|c| c.downcast::<Label>().ok()) {
+                            let icon = lbl.text();
+                            ie_ref.set_text(&icon);
+                            write_property_by_name(&buf, &prop_name, &icon, &writing);
+                        }
+                        pop_ref.popdown();
+                    });
+                }
+                {
+                    let pop_ref = pop.clone();
+                    pick_btn.connect_clicked(move |_| { pop_ref.popup(); });
+                }
+
+                entries.push((name.to_string(), ie));
+
+            } else if let Some((min, max, step, dec)) = numeric_range_for(name) {
+                // Numeric — SpinButton, write on focus-leave only (avoids undo spam)
+                let cur: f64 = trimmed.parse().unwrap_or(min.max(0.0));
+                let adj = Adjustment::new(cur, min, max, step, step * 10.0, 0.0);
+                let spin = SpinButton::new(Some(&adj), step, dec);
+                spin.set_numeric(true);
+                {
+                    let buf = buffer.clone();
+                    let prop_name = name.to_string();
+                    let spin_ref = spin.clone();
+                    let clearing = self.clearing.clone();
+                    let writing = self.writing.clone();
+                    let focus = gtk4::EventControllerFocus::new();
+                    focus.connect_leave(move |_| {
+                        if clearing.get() || writing.get() { return; }
+                        let val = if dec == 0 {
+                            format!("{}", spin_ref.value() as i64)
+                        } else {
+                            format!("{:.prec$}", spin_ref.value(), prec = dec as usize)
+                        };
+                        write_property_by_name(&buf, &prop_name, &val, &writing);
+                    });
+                    spin.add_controller(focus);
+                }
+                row.append(&spin);
+
+            } else if let Some(opts) = enum_options_for(name, trimmed) {
+                // Known enum — DropDown
                 let selected = opts.iter().position(|&o| o == trimmed).unwrap_or(0) as u32;
                 let dd = DropDown::new(
                     Some(StringList::new(opts)),
@@ -415,13 +602,13 @@ impl Inspector {
                     });
                 }
                 row.append(&dd);
+
             } else {
+                // Free-text Entry
                 let entry = Entry::new();
                 entry.set_text(value);
                 entry.add_css_class("monospace");
-
                 row.append(&entry);
-
                 {
                     let buf = buffer.clone();
                     let prop_name = name.to_string();
@@ -445,7 +632,6 @@ impl Inspector {
                     });
                     entry.add_controller(focus);
                 }
-
                 entries.push((name.to_string(), entry));
             }
 
@@ -806,6 +992,137 @@ fn snap_to_char_boundary(s: &str, offset: usize) -> usize {
         pos -= 1;
     }
     pos
+}
+
+/// Delete an entire `<property name="...">...</property>` line from the buffer.
+fn delete_property_by_name(
+    buffer: &sourceview5::Buffer,
+    prop_name: &str,
+    writing: &Rc<Cell<bool>>,
+) {
+    if writing.get() { return; }
+    writing.set(true);
+
+    let (buf_start, buf_end) = buffer.bounds();
+    let full_text = buffer.text(&buf_start, &buf_end, false).to_string();
+
+    let cursor = buffer.iter_at_mark(&buffer.get_insert());
+    let cursor_char = cursor.offset() as usize;
+    let cursor_byte = full_text.char_indices().nth(cursor_char)
+        .map(|(i, _)| i).unwrap_or(full_text.len());
+    let safe_cursor = snap_to_char_boundary(&full_text, cursor_byte);
+
+    let obj_start = match full_text[..safe_cursor].rfind("<object") {
+        Some(s) => s,
+        None => { writing.set(false); return; }
+    };
+    let obj_rest = &full_text[obj_start..];
+    let obj_end = match find_closing_object(obj_rest) {
+        Some(e) => e,
+        None => { writing.set(false); return; }
+    };
+    let block = &full_text[obj_start..obj_start + obj_end];
+
+    let search_pattern = format!("<property name=\"{}\">", prop_name);
+    let prop_in_block = match block.find(&search_pattern) {
+        Some(p) => p,
+        None => { writing.set(false); return; }
+    };
+    let after_prop = &block[prop_in_block..];
+    let close_end = match after_prop.find("</property>") {
+        Some(c) => c + "</property>".len(),
+        None => { writing.set(false); return; }
+    };
+
+    let abs_prop_start = obj_start + prop_in_block;
+    let abs_prop_end   = obj_start + prop_in_block + close_end;
+
+    // Expand to the full line: back to the newline before, forward past the newline after
+    let line_start = full_text[..abs_prop_start].rfind('\n').map(|i| i + 1).unwrap_or(0);
+    let line_end   = if full_text[abs_prop_end..].starts_with('\n') {
+        abs_prop_end + 1
+    } else {
+        abs_prop_end
+    };
+
+    let cs = full_text[..line_start].chars().count();
+    let ce = full_text[..line_end].chars().count();
+    let mut si = buffer.iter_at_offset(cs as i32);
+    let mut ei = buffer.iter_at_offset(ce as i32);
+
+    buffer.begin_user_action();
+    buffer.delete(&mut si, &mut ei);
+    buffer.end_user_action();
+
+    writing.set(false);
+}
+
+/// Returns `true` if this property should be shown as a colour picker.
+fn looks_like_color(norm_name: &str, value: &str) -> bool {
+    if norm_name == "rgba" || norm_name == "color"
+        || norm_name.ends_with("_color") || norm_name.ends_with("_rgba")
+    {
+        return true;
+    }
+    // Detect by value format too (e.g. a property named "tint" with value "#aabbcc")
+    let v = value.trim();
+    v.starts_with('#') || v.starts_with("rgb(") || v.starts_with("rgba(")
+}
+
+/// Return (min, max, step, decimal_digits) for known numeric properties,
+/// or `None` if the property is not purely numeric.
+fn numeric_range_for(prop_name: &str) -> Option<(f64, f64, f64, u32)> {
+    let name = prop_name.replace('-', "_");
+    match name.as_str() {
+        // ── Margins (px, integer, -1 not valid here) ─────────────────
+        "margin_start" | "margin_end" | "margin_top" | "margin_bottom"
+            => Some((0.0, 32767.0, 1.0, 0)),
+
+        // ── Spacing ───────────────────────────────────────────────────
+        "spacing" | "column_spacing" | "row_spacing"
+            => Some((0.0, 32767.0, 1.0, 0)),
+
+        // ── Size requests (-1 = natural size) ────────────────────────
+        "width_request" | "height_request"
+            => Some((-1.0, 32767.0, 1.0, 0)),
+
+        // ── Label / text field width hints ────────────────────────────
+        "width_chars" | "max_width_chars"
+            => Some((-1.0, 32767.0, 1.0, 0)),
+
+        // ── Max text length ───────────────────────────────────────────
+        "max_length" => Some((0.0, 65535.0, 1.0, 0)),
+
+        // ── Opacity / alpha (0.0 – 1.0) ──────────────────────────────
+        "opacity" | "alpha" => Some((0.0, 1.0, 0.05, 2)),
+
+        // ── Alignment floats (0.0 – 1.0) ─────────────────────────────
+        "xalign" | "yalign" => Some((0.0, 1.0, 0.05, 2)),
+
+        // ── Icon pixel size (-1 = icon-theme default) ─────────────────
+        "pixel_size" => Some((-1.0, 512.0, 1.0, 0)),
+
+        // ── Animation duration (ms) ───────────────────────────────────
+        "transition_duration" => Some((0.0, 10000.0, 100.0, 0)),
+
+        // ── SpinButton decimal digits ──────────────────────────────────
+        "digits" => Some((0.0, 20.0, 1.0, 0)),
+
+        // ── GtkTextView line/indent pixels ───────────────────────────
+        "pixels_above_lines" | "pixels_below_lines" | "pixels_inside_wrap"
+        | "left_margin" | "right_margin" | "top_margin" | "bottom_margin"
+            => Some((0.0, 32767.0, 1.0, 0)),
+        "indent" => Some((-32767.0, 32767.0, 1.0, 0)),
+
+        // ── SourceView tab width ──────────────────────────────────────
+        "tab_width" => Some((1.0, 32.0, 1.0, 0)),
+
+        // ── GtkGrid child position / span ────────────────────────────
+        "column" | "row" => Some((0.0, 255.0, 1.0, 0)),
+        "column_span" | "row_span" => Some((1.0, 255.0, 1.0, 0)),
+
+        _ => None,
+    }
 }
 
 /// Return the fixed set of valid values for well-known GTK4 enum properties,
