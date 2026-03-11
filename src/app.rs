@@ -299,6 +299,14 @@ fn rebuild_mru_menus(
 pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
     let cfg = crate::config::load();
 
+    // Apply persisted dark mode preference
+    if let Some(settings) = gtk4::Settings::default() {
+        settings.set_gtk_application_prefer_dark_theme(cfg.dark_mode);
+    }
+
+    // In-memory dark mode state — source of truth for toggling
+    let dark_state = Rc::new(Cell::new(cfg.dark_mode));
+
     let notebook   = NotebookManager::new();
     let sidebar    = FileTree::new();
     let output     = OutputPanel::new();
@@ -328,6 +336,14 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         .build();
 
     let (menubar_model, recent_files_menu, recent_projects_menu) = menubar::build(app);
+
+    // Sync initial toggle-dark action state from persisted config
+    if let Some(action) = app.lookup_action("toggle-dark") {
+        if let Some(sa) = action.downcast_ref::<gtk4::gio::SimpleAction>() {
+            use gtk4::glib::variant::ToVariant;
+            sa.set_state(&cfg.dark_mode.to_variant());
+        }
+    }
 
     // ── Header Bar (CSD) ─────────────────────────────────────────
     let header_bar = gtk4::HeaderBar::new();
@@ -487,7 +503,16 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
     sep4.set_margin_start(4); sep4.set_margin_end(4);
     master_toolbar.append(&sep4);
     
-    master_toolbar.append(&make_tool_btn("\u{f186}", "Toggle Dark Mode", "app.toggle-dark"));
+    // Dark mode button — kept separately so we can swap the icon on toggle
+    let dark_btn = gtk4::Button::builder()
+        .label(if cfg.dark_mode { "\u{f185}" } else { "\u{f186}" })
+        .tooltip_text(if cfg.dark_mode { "Switch to Light Mode" } else { "Switch to Dark Mode" })
+        .action_name("app.toggle-dark")
+        .build();
+    dark_btn.add_css_class("nf");
+    dark_btn.add_css_class("flat");
+    dark_btn.add_css_class("toolbar-icon");
+    master_toolbar.append(&dark_btn);
     master_toolbar.append(&make_tool_btn("\u{f29c}", "Help", "app.help"));
 
     // Wrap center_nb in center_area (with Master Toolbar above)
@@ -1378,25 +1403,31 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
 
     // View → Toggle Dark Mode
     {
+        use gtk4::glib::variant::ToVariant;
+        let app_weak = gtk4::glib::object::ObjectExt::downgrade(app);
+        let dark_btn_ref = dark_btn.clone();
+        let dark_state_ref = dark_state.clone();
         menubar::connect_action(app, "toggle-dark", move || {
+            let now_dark = !dark_state_ref.get();
+            dark_state_ref.set(now_dark);
             if let Some(settings) = gtk4::Settings::default() {
-                let dark = settings.is_gtk_application_prefer_dark_theme();
-                settings.set_gtk_application_prefer_dark_theme(!dark);
-                
-                // Keep the theme name in sync (Adwaita/Adwaita-dark or similar)
-                let theme_name = settings.gtk_theme_name().unwrap_or_else(|| "Adwaita".into()).to_string();
-                if dark {
-                    // Turn Light
-                    if theme_name.ends_with("-dark") {
-                        settings.set_gtk_theme_name(Some(&theme_name.replace("-dark", "")));
-                    }
-                } else {
-                    // Turn Dark
-                    if !theme_name.ends_with("-dark") {
-                        settings.set_gtk_theme_name(Some(&format!("{}-dark", theme_name)));
+                settings.set_gtk_application_prefer_dark_theme(now_dark);
+            }
+            // Update toolbar button icon: moon = enable dark, sun = enable light
+            dark_btn_ref.set_label(if now_dark { "\u{f185}" } else { "\u{f186}" });
+            dark_btn_ref.set_tooltip_text(Some(if now_dark { "Switch to Light Mode" } else { "Switch to Dark Mode" }));
+            // Update action state so the menu shows a checkmark
+            if let Some(app) = app_weak.upgrade() {
+                if let Some(action) = app.lookup_action("toggle-dark") {
+                    if let Some(sa) = action.downcast_ref::<gtk4::gio::SimpleAction>() {
+                        sa.set_state(&now_dark.to_variant());
                     }
                 }
             }
+            // Persist to rui.toml
+            let mut editor_cfg = crate::config::load();
+            editor_cfg.dark_mode = now_dark;
+            crate::config::save_editor_config(&editor_cfg);
         });
     }
 

@@ -32,6 +32,8 @@ pub struct EditorConfig {
     pub autosave: bool,
     #[serde(default = "default_true")]
     pub show_preview: bool,
+    #[serde(default)]
+    pub dark_mode: bool,
 }
 
 fn default_font() -> String { "JetBrains Mono 13".into() }
@@ -54,6 +56,7 @@ impl Default for EditorConfig {
             default_dir: String::new(),
             autosave: false,
             show_preview: true,
+            dark_mode: false,
         }
     }
 }
@@ -95,6 +98,17 @@ pub fn load_ai_config() -> crate::ai_provider::AiConfig {
             cfg.ai
         }
         Err(_) => crate::ai_provider::AiConfig::default(),
+    }
+}
+
+/// Persist editor configuration back to rui.toml.
+pub fn save_editor_config(editor: &EditorConfig) {
+    let path = config_path();
+    let ai = load_ai_config();
+    let cfg = RuiConfig { editor: editor.clone(), ai };
+    if let Ok(text) = toml::to_string_pretty(&cfg) {
+        let _ = std::fs::create_dir_all(path.parent().unwrap_or(std::path::Path::new("/tmp")));
+        let _ = std::fs::write(&path, text);
     }
 }
 

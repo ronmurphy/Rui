@@ -1,5 +1,6 @@
 use gtk4::prelude::*;
 use gtk4::gio::{Menu, MenuItem, SimpleAction};
+use gtk4::glib::variant::ToVariant;
 use gtk4::Application;
 
 /// Build the menubar.  Returns the widget plus two dynamic menus that the
@@ -111,7 +112,7 @@ pub fn build(app: &Application) -> (Menu, Menu, Menu) {
         "new-tab", "new-project", "new-ui", "open", "open-project", "save", "save-all", "save-as", "close-tab",
         "designer-undo", "designer-redo",
         "cut", "copy", "paste", "select-all", "find", "find-replace", "goto-line",
-        "toggle-sidebar", "toggle-output", "toggle-canvas", "toggle-toolbox", "toggle-preview", "toggle-minimap", "toggle-dark",
+        "toggle-sidebar", "toggle-output", "toggle-canvas", "toggle-toolbox", "toggle-preview", "toggle-minimap",
         "layout-code", "layout-designer",
         "run", "build", "stop", "open-browser", "generate-handlers", "template-library",
         "ai-open", "claude-code-open", "api-chat-open", "ai-copy-file", "ai-copy-selection", "ai-apply-diff",
@@ -120,6 +121,10 @@ pub fn build(app: &Application) -> (Menu, Menu, Menu) {
         let action = SimpleAction::new(name, None);
         app.add_action(&action);
     }
+
+    // toggle-dark is a stateful bool action — the menu shows a checkmark when dark mode is on
+    let toggle_dark = SimpleAction::new_stateful("toggle-dark", None, &false.to_variant());
+    app.add_action(&toggle_dark);
 
     (menubar_model, recent_files_menu, recent_projects_menu)
 }
