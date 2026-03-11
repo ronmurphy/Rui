@@ -1,6 +1,6 @@
 [package]
 name = "rui"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 license = "MIT"
 description = "A GTK4 UI designer for Rust developers — edit .ui files with live preview"

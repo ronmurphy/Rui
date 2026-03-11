@@ -1953,16 +1953,28 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
 
     // Help → About
     {
+        // Capture app clone before closure if needed, but we don't need it.
         let win = window.clone();
         menubar::connect_action(app, "about", move || {
-            let dialog = gtk4::AboutDialog::builder()
+            let logo_path = std::env::current_dir()
+                .unwrap_or_default()
+                .join("data/org.rui.designer.svg");
+            
+            let mut builder = gtk4::AboutDialog::builder()
                 .transient_for(&win)
                 .modal(true)
                 .program_name("Rui")
-                .version("0.1.0")
+                .version("0.2.0")
                 .comments("A GTK4 UI designer for Rust developers.")
-                .license_type(gtk4::License::MitX11)
-                .build();
+                .license_type(gtk4::License::MitX11);
+
+            if let Ok(texture) = gtk4::gdk::Texture::from_filename(&logo_path) {
+                builder = builder.logo(&texture.upcast::<gtk4::gdk::Paintable>());
+            } else {
+                builder = builder.logo_icon_name("applications-graphics-symbolic");
+            }
+
+            let dialog = builder.build();
             dialog.present();
         });
     }
