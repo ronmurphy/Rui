@@ -27,19 +27,6 @@ use crate::runner::RunManager;
 use crate::sidebar::FileTree;
 use crate::statusbar::StatusBar;
 
-/// Resize a window that is already visible (set_default_size only works before show).
-fn resize_window(win: &ApplicationWindow, w: i32, h: i32) {
-    use gtk4::prelude::*;
-    // In GTK4 on Wayland/X11 the surface-level request is the correct way.
-    if let Some(surface) = win.surface() {
-        if let Some(toplevel) = surface.downcast_ref::<gtk4::gdk::ToplevelLayout>() {
-            // This path won't work — ToplevelLayout isn't the surface.
-            let _ = toplevel;
-        }
-    }
-    // The simplest GTK4 approach: set_default_size + queue_resize.
-    win.set_default_size(w, h);
-}
 
 #[cfg(feature = "preview")]
 use crate::preview::PreviewPane;
@@ -1564,27 +1551,15 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         let st = state.clone();
         menubar::connect_action(app, "claude-code-open", move || {
             let s = st.borrow();
-            let will_show = !s.claude_panel.is_visible();
+            let now_visible = s.claude_panel.toggle();
             let win = &s.window;
+            let cur_w = win.width();
+            let cur_h = win.height();
             let delta = crate::claude_code::SIDEBAR_WIDTH;
-            if will_show {
-                // Extend the window first, then reveal the panel on the next frame.
-                resize_window(win, win.width() + delta, win.height());
-                let widget = s.claude_panel.widget.clone();
-                let input = s.claude_panel.input_widget().clone();
-                gtk4::glib::idle_add_local_once(move || {
-                    widget.set_visible(true);
-                    input.grab_focus();
-                });
+            if now_visible {
+                win.set_default_size(cur_w + delta, cur_h);
             } else {
-                // Hide the panel first, then shrink.
-                s.claude_panel.set_visible(false);
-                let w = win.clone();
-                let cur_w = win.width();
-                let cur_h = win.height();
-                gtk4::glib::idle_add_local_once(move || {
-                    resize_window(&w, (cur_w - delta).max(800), cur_h);
-                });
+                win.set_default_size((cur_w - delta).max(800), cur_h);
             }
         });
     }

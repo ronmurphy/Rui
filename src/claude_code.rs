@@ -260,19 +260,17 @@ impl ClaudeCodePanel {
         *self.on_apply_rs_cb.borrow_mut() = Some(Box::new(cb));
     }
 
-    pub fn set_visible(&self, visible: bool) {
+    pub fn toggle(&self) -> bool {
+        let visible = !self.widget.is_visible();
         self.widget.set_visible(visible);
         if visible {
             self.input.grab_focus();
         }
+        visible
     }
 
     pub fn is_visible(&self) -> bool {
         self.widget.is_visible()
-    }
-
-    pub fn input_widget(&self) -> &TextView {
-        &self.input
     }
 
     /// Kill any running Claude process. Call this on app shutdown.
