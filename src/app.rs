@@ -1202,29 +1202,43 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         let st = state.clone();
         menubar::connect_action(app, "save-all", move || {
             let s = st.borrow();
+            let tabs = s.notebook.all_tabs();
+            let saveable: Vec<_> = tabs.iter()
+                .filter(|t| t.path().is_some())
+                .collect();
+
+            if saveable.is_empty() {
+                s.output.append_run_line("Save All: no open files with a path.");
+                return;
+            }
+
             let mut saved = 0usize;
             let mut failed = 0usize;
-            for tab in s.notebook.all_tabs() {
-                if tab.path().is_some() && tab.is_modified() {
-                    match tab.save() {
-                        Ok(()) => {
-                            saved += 1;
-                            validate_ui_tab(&tab, &s.output);
-                        }
-                        Err(e) => {
-                            log::error!("Save All: {}", e);
-                            failed += 1;
-                        }
+            for tab in &saveable {
+                let name = tab.path()
+                    .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+                    .unwrap_or_else(|| "?".to_string());
+                match tab.save() {
+                    Ok(()) => {
+                        saved += 1;
+                        s.output.append_run_line(&format!("  ✓ {}", name));
+                        validate_ui_tab(tab, &s.output);
+                    }
+                    Err(e) => {
+                        log::error!("Save All: {}", e);
+                        s.output.append_run_error(&format!("  ✗ {} — {}", name, e));
+                        failed += 1;
                     }
                 }
             }
+
             if failed > 0 {
                 s.output.append_run_error(&format!(
-                    "Save All: {} saved, {} failed", saved, failed
+                    "Save All: {} saved, {} failed.", saved, failed
                 ));
-            } else if saved > 0 {
+            } else {
                 s.output.append_run_line(&format!(
-                    "✓ Saved {} file{}", saved, if saved == 1 { "" } else { "s" }
+                    "✓ Save All: {} file{} saved.", saved, if saved == 1 { "" } else { "s" }
                 ));
             }
         });
@@ -1293,46 +1307,60 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         });
     }
 
-    // Edit → Designer Undo (Design mode only; Ctrl+Z)
+    // Edit → Undo (Ctrl+Z): designer history in Design mode, SourceView undo in Code mode
     {
         let st = state.clone();
         menubar::connect_action(app, "designer-undo", move || {
             let s = st.borrow();
-            if s.center_nb.current_page() != Some(0) { return; }
-            let xml = s.history.borrow_mut().undo();
-            if let Some(xml) = xml {
-                s.history_applying.set(true);
-                if let Some(tab) = s.notebook.current_tab() {
-                    let buf = tab.buffer();
-                    buf.begin_user_action();
-                    let (mut start, mut end) = (buf.start_iter(), buf.end_iter());
-                    buf.delete(&mut start, &mut end);
-                    buf.insert(&mut buf.end_iter(), &xml);
-                    buf.end_user_action();
+            if s.center_nb.current_page() == Some(0) {
+                // Design mode: restore previous XML snapshot
+                let xml = s.history.borrow_mut().undo();
+                if let Some(xml) = xml {
+                    s.history_applying.set(true);
+                    if let Some(tab) = s.notebook.current_tab() {
+                        let buf = tab.buffer();
+                        buf.begin_user_action();
+                        let (mut start, mut end) = (buf.start_iter(), buf.end_iter());
+                        buf.delete(&mut start, &mut end);
+                        buf.insert(&mut buf.end_iter(), &xml);
+                        buf.end_user_action();
+                    }
+                    s.history_applying.set(false);
                 }
-                s.history_applying.set(false);
+            } else {
+                // Code mode: delegate to SourceView's built-in undo
+                if let Some(tab) = s.notebook.current_tab() {
+                    tab.buffer().undo();
+                }
             }
         });
     }
 
-    // Edit → Designer Redo (Design mode only; Ctrl+Y / Ctrl+Shift+Z)
+    // Edit → Redo (Ctrl+Y / Ctrl+Shift+Z): designer history in Design mode, SourceView redo in Code mode
     {
         let st = state.clone();
         menubar::connect_action(app, "designer-redo", move || {
             let s = st.borrow();
-            if s.center_nb.current_page() != Some(0) { return; }
-            let xml = s.history.borrow_mut().redo();
-            if let Some(xml) = xml {
-                s.history_applying.set(true);
-                if let Some(tab) = s.notebook.current_tab() {
-                    let buf = tab.buffer();
-                    buf.begin_user_action();
-                    let (mut start, mut end) = (buf.start_iter(), buf.end_iter());
-                    buf.delete(&mut start, &mut end);
-                    buf.insert(&mut buf.end_iter(), &xml);
-                    buf.end_user_action();
+            if s.center_nb.current_page() == Some(0) {
+                // Design mode: restore next XML snapshot
+                let xml = s.history.borrow_mut().redo();
+                if let Some(xml) = xml {
+                    s.history_applying.set(true);
+                    if let Some(tab) = s.notebook.current_tab() {
+                        let buf = tab.buffer();
+                        buf.begin_user_action();
+                        let (mut start, mut end) = (buf.start_iter(), buf.end_iter());
+                        buf.delete(&mut start, &mut end);
+                        buf.insert(&mut buf.end_iter(), &xml);
+                        buf.end_user_action();
+                    }
+                    s.history_applying.set(false);
                 }
-                s.history_applying.set(false);
+            } else {
+                // Code mode: delegate to SourceView's built-in redo
+                if let Some(tab) = s.notebook.current_tab() {
+                    tab.buffer().redo();
+                }
             }
         });
     }

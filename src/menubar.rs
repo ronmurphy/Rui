@@ -38,8 +38,8 @@ pub fn build(app: &Application) -> (Menu, Menu, Menu) {
 
     // ── Edit ─────────────────────────────────────────────────────
     let edit_menu = Menu::new();
-    edit_menu.append(Some("Designer Undo"), Some("app.designer-undo"));
-    edit_menu.append(Some("Designer Redo"), Some("app.designer-redo"));
+    edit_menu.append(Some("Undo"), Some("app.designer-undo"));
+    edit_menu.append(Some("Redo"), Some("app.designer-redo"));
     let edit_sep = gtk4::gio::Menu::new();
     edit_menu.append_section(None, &edit_sep);
     edit_menu.append(Some("Cut"),        Some("app.cut"));

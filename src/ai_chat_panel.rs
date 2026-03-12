@@ -16,7 +16,8 @@ use gtk4::{
     InputHints, InputPurpose,
 };
 use gtk4::glib;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
+use std::time::Duration;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
@@ -478,7 +479,7 @@ impl AiChatPanel {
         prompt.push_str(&text);
 
         self.add_message("user", &text);
-        let response_label = self.add_streaming_placeholder();
+        let (response_label, anim_stop) = self.add_streaming_placeholder();
 
         *self.busy.borrow_mut() = true;
         self.send_btn.set_visible(false);
@@ -537,6 +538,7 @@ impl AiChatPanel {
                         response_label.add_css_class("error");
                     }
                     StreamEvent::Done => {
+                        anim_stop.set(true);
                         *panel.busy.borrow_mut() = false;
                         panel.spinner.stop();
                         panel.spinner.set_visible(false);
@@ -584,7 +586,7 @@ impl AiChatPanel {
         self.scroll_to_bottom();
     }
 
-    fn add_streaming_placeholder(&self) -> Label {
+    fn add_streaming_placeholder(&self) -> (Label, Rc<Cell<bool>>) {
         let msg_box = GtkBox::new(Orientation::Vertical, 2);
         msg_box.set_margin_top(4);
         msg_box.set_margin_bottom(4);
@@ -593,7 +595,7 @@ impl AiChatPanel {
         role_lbl.set_halign(gtk4::Align::Start);
         role_lbl.add_css_class("heading");
 
-        let text_lbl = Label::new(Some("thinking…"));
+        let text_lbl = Label::new(Some("thinking"));
         text_lbl.set_halign(gtk4::Align::Start);
         text_lbl.set_wrap(true);
         text_lbl.set_selectable(true);
@@ -604,7 +606,23 @@ impl AiChatPanel {
         msg_box.append(&text_lbl);
         self.chat_box.append(&msg_box);
         self.scroll_to_bottom();
-        text_lbl
+
+        // Animated ellipsis: "thinking" → "thinking." → "thinking.." → "thinking..."
+        let anim_stop = Rc::new(Cell::new(false));
+        let anim_stop_timer = anim_stop.clone();
+        let anim_lbl = text_lbl.clone();
+        let dot_count = Rc::new(Cell::new(0u8));
+        glib::timeout_add_local(Duration::from_millis(400), move || {
+            if anim_stop_timer.get() {
+                return glib::ControlFlow::Break;
+            }
+            let n = dot_count.get();
+            anim_lbl.set_text(&format!("thinking{}", ".".repeat(n as usize)));
+            dot_count.set((n + 1) % 4);
+            glib::ControlFlow::Continue
+        });
+
+        (text_lbl, anim_stop)
     }
 
     fn add_apply_buttons_for(&self, text: &str, label: &Label) {
