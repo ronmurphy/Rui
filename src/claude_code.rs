@@ -517,8 +517,13 @@ impl ClaudeCodePanel {
             let code = block.code.clone();
 
             if is_diff {
-                // Green "Review Diff" button → opens diff tool
-                let btn = Button::with_label("Review Diff");
+                // Extract filename from diff headers (--- a/file or +++ b/file)
+                let diff_file = extract_diff_filename(&code);
+                let btn_text = match diff_file {
+                    Some(ref name) => format!("Review Diff — {}", name),
+                    None => "Review Diff".to_string(),
+                };
+                let btn = Button::with_label(&btn_text);
                 btn.add_css_class("success");
                 btn.set_halign(gtk4::Align::Start);
                 btn.set_margin_top(4);
@@ -532,10 +537,19 @@ impl ClaudeCodePanel {
                 continue;
             }
 
+            // Try to extract a filename from the code block content
+            let file_hint = extract_code_filename(&code, &block.lang);
+
             let btn_label = if is_xml {
-                "Apply to .ui file".to_string()
+                match file_hint {
+                    Some(ref name) => format!("Apply to {}", name),
+                    None => "Apply to .ui file".to_string(),
+                }
             } else if is_rust {
-                "Apply to .rs file".to_string()
+                match file_hint {
+                    Some(ref name) => format!("Apply to {}", name),
+                    None => "Apply to .rs file".to_string(),
+                }
             } else if block.lang.is_empty() {
                 format!("Apply block {}", i + 1)
             } else {
@@ -549,20 +563,32 @@ impl ClaudeCodePanel {
 
             if is_rust {
                 let apply_cb = self.on_apply_rs_cb.clone();
+                let applied_label = match file_hint {
+                    Some(ref name) => format!("Applied to {} ✓", name),
+                    None => "Applied to .rs ✓".to_string(),
+                };
                 btn.connect_clicked(move |b| {
                     if let Some(cb) = apply_cb.borrow().as_ref() {
                         cb(&code);
                     }
-                    b.set_label("Applied to .rs ✓");
+                    b.set_label(&applied_label);
                     b.set_sensitive(false);
                 });
             } else {
                 let apply_cb = self.on_apply_xml_cb.clone();
+                let applied_label = if is_xml {
+                    match file_hint {
+                        Some(ref name) => format!("Applied to {} ✓", name),
+                        None => "Applied to .ui ✓".to_string(),
+                    }
+                } else {
+                    "Applied ✓".to_string()
+                };
                 btn.connect_clicked(move |b| {
                     if let Some(cb) = apply_cb.borrow().as_ref() {
                         cb(&code);
                     }
-                    b.set_label(if is_xml { "Applied to .ui ✓" } else { "Applied ✓" });
+                    b.set_label(&applied_label);
                     b.set_sensitive(false);
                 });
             }
@@ -735,4 +761,78 @@ fn extract_code_blocks(text: &str) -> Vec<CodeBlock> {
     }
 
     blocks
+}
+
+/// Extract a filename from a unified diff's `---` or `+++` header lines.
+/// e.g. `--- a/src/main.rs` → `src/main.rs`, `+++ b/layout.ui` → `layout.ui`
+fn extract_diff_filename(diff: &str) -> Option<String> {
+    for line in diff.lines() {
+        let trimmed = line.trim();
+        // Prefer +++ (the "to" file) over --- (the "from" file)
+        if trimmed.starts_with("+++ ") {
+            let path = trimmed.strip_prefix("+++ ").unwrap().trim();
+            if path == "/dev/null" { continue; }
+            // Strip a/ or b/ prefix
+            let clean = path.strip_prefix("b/")
+                .or_else(|| path.strip_prefix("a/"))
+                .unwrap_or(path);
+            // Return just the filename portion for the button label
+            let name = std::path::Path::new(clean)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(clean);
+            return Some(name.to_string());
+        }
+    }
+    // Fallback: try --- line
+    for line in diff.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("--- ") {
+            let path = trimmed.strip_prefix("--- ").unwrap().trim();
+            if path == "/dev/null" { continue; }
+            let clean = path.strip_prefix("a/")
+                .or_else(|| path.strip_prefix("b/"))
+                .unwrap_or(path);
+            let name = std::path::Path::new(clean)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(clean);
+            return Some(name.to_string());
+        }
+    }
+    None
+}
+
+/// Try to extract a filename from code block content.
+/// Looks for common patterns like `// file: src/foo.rs` or the file path
+/// in the first comment line.
+fn extract_code_filename(code: &str, lang: &str) -> Option<String> {
+    for line in code.lines().take(5) {
+        let trimmed = line.trim();
+        // "// file: foo.rs" or "// File: src/foo.rs" or "<!-- file: layout.ui -->"
+        let lower = trimmed.to_lowercase();
+        if lower.starts_with("// file:") || lower.starts_with("// filename:") {
+            let rest = trimmed.splitn(2, ':').nth(1)?.trim();
+            let name = std::path::Path::new(rest)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(rest);
+            return Some(name.to_string());
+        }
+        if lower.starts_with("<!-- file:") || lower.starts_with("<!-- filename:") {
+            let rest = trimmed.splitn(2, ':').nth(1)?.trim();
+            let name = rest.trim_end_matches("-->").trim();
+            let name = std::path::Path::new(name)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(name);
+            return Some(name.to_string());
+        }
+    }
+
+    // For xml/ui: look for common GTK patterns — not much to extract a name from
+    // For rust: look for mod declarations or similar — also unreliable
+    // Fall back to extension-based hint only
+    _ = lang;
+    None
 }

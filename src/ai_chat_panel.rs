@@ -113,6 +113,68 @@ fn extract_code_blocks(text: &str) -> Vec<CodeBlock> {
     blocks
 }
 
+/// Extract a filename from a unified diff's `---` or `+++` header lines.
+fn extract_diff_filename(diff: &str) -> Option<String> {
+    for line in diff.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("+++ ") {
+            let path = trimmed.strip_prefix("+++ ").unwrap().trim();
+            if path == "/dev/null" { continue; }
+            let clean = path.strip_prefix("b/")
+                .or_else(|| path.strip_prefix("a/"))
+                .unwrap_or(path);
+            let name = std::path::Path::new(clean)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(clean);
+            return Some(name.to_string());
+        }
+    }
+    for line in diff.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("--- ") {
+            let path = trimmed.strip_prefix("--- ").unwrap().trim();
+            if path == "/dev/null" { continue; }
+            let clean = path.strip_prefix("a/")
+                .or_else(|| path.strip_prefix("b/"))
+                .unwrap_or(path);
+            let name = std::path::Path::new(clean)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(clean);
+            return Some(name.to_string());
+        }
+    }
+    None
+}
+
+/// Try to extract a filename from code block content.
+fn extract_code_filename(code: &str, lang: &str) -> Option<String> {
+    for line in code.lines().take(5) {
+        let trimmed = line.trim();
+        let lower = trimmed.to_lowercase();
+        if lower.starts_with("// file:") || lower.starts_with("// filename:") {
+            let rest = trimmed.splitn(2, ':').nth(1)?.trim();
+            let name = std::path::Path::new(rest)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(rest);
+            return Some(name.to_string());
+        }
+        if lower.starts_with("<!-- file:") || lower.starts_with("<!-- filename:") {
+            let rest = trimmed.splitn(2, ':').nth(1)?.trim();
+            let name = rest.trim_end_matches("-->").trim();
+            let name = std::path::Path::new(name)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(name);
+            return Some(name.to_string());
+        }
+    }
+    _ = lang;
+    None
+}
+
 // ── Panel struct ──────────────────────────────────────────────────────────────
 
 #[derive(Clone)]
@@ -640,7 +702,12 @@ impl AiChatPanel {
             let code = block.code.clone();
 
             if is_diff {
-                let btn = Button::with_label("Review Diff");
+                let diff_file = extract_diff_filename(&code);
+                let btn_text = match diff_file {
+                    Some(ref name) => format!("Review Diff — {}", name),
+                    None => "Review Diff".to_string(),
+                };
+                let btn = Button::with_label(&btn_text);
                 btn.add_css_class("success");
                 btn.set_halign(gtk4::Align::Start);
                 btn.set_margin_top(4);
@@ -654,10 +721,23 @@ impl AiChatPanel {
                 continue;
             }
 
-            let btn_label = if is_xml  { "Apply to .ui file".to_string() }
-                       else if is_rust { "Apply to .rs file".to_string() }
-                       else if block.lang.is_empty() { format!("Apply block {}", i + 1) }
-                       else { format!("Apply {} block", block.lang) };
+            let file_hint = extract_code_filename(&code, &block.lang);
+
+            let btn_label = if is_xml {
+                match file_hint {
+                    Some(ref name) => format!("Apply to {}", name),
+                    None => "Apply to .ui file".to_string(),
+                }
+            } else if is_rust {
+                match file_hint {
+                    Some(ref name) => format!("Apply to {}", name),
+                    None => "Apply to .rs file".to_string(),
+                }
+            } else if block.lang.is_empty() {
+                format!("Apply block {}", i + 1)
+            } else {
+                format!("Apply {} block", block.lang)
+            };
 
             let btn = Button::with_label(&btn_label);
             btn.add_css_class("suggested-action");
@@ -666,16 +746,28 @@ impl AiChatPanel {
 
             if is_rust {
                 let cb = self.on_apply_rs_cb.clone();
+                let applied_label = match file_hint {
+                    Some(ref name) => format!("Applied to {} ✓", name),
+                    None => "Applied to .rs ✓".to_string(),
+                };
                 btn.connect_clicked(move |b| {
                     if let Some(f) = cb.borrow().as_ref() { f(&code); }
-                    b.set_label("Applied to .rs ✓");
+                    b.set_label(&applied_label);
                     b.set_sensitive(false);
                 });
             } else {
                 let cb = self.on_apply_xml_cb.clone();
+                let applied_label = if is_xml {
+                    match file_hint {
+                        Some(ref name) => format!("Applied to {} ✓", name),
+                        None => "Applied to .ui ✓".to_string(),
+                    }
+                } else {
+                    "Applied ✓".to_string()
+                };
                 btn.connect_clicked(move |b| {
                     if let Some(f) = cb.borrow().as_ref() { f(&code); }
-                    b.set_label(if is_xml { "Applied to .ui ✓" } else { "Applied ✓" });
+                    b.set_label(&applied_label);
                     b.set_sensitive(false);
                 });
             }
