@@ -8,7 +8,7 @@
 use gtk4::prelude::*;
 use gtk4::{
     Box as GtkBox, Button, Label, Orientation, ScrolledWindow, Separator,
-    TextView, WrapMode,
+    Spinner, TextView, WrapMode,
 };
 use gtk4::glib;
 use std::cell::RefCell;
@@ -45,8 +45,17 @@ Key facts about the companion Rust code:
 - Uses gtk4::prelude::* for trait methods
 
 When you respond:
-- Wrap UI XML changes in ```xml code blocks
-- Wrap Rust code changes in ```rust code blocks
+- For NEW code or full rewrites: wrap in ```xml or ```rust code blocks
+- For FIXING compile errors or small edits: respond with a unified git diff in a ```diff code block
+  The diff format must be a valid unified diff:
+  ```diff
+  --- a/src/layout_app.rs
+  +++ b/src/layout_app.rs
+  @@ -10,6 +10,7 @@
+   context line
+  -old line
+  +new line
+  ```
 - The user can apply each block independently to the correct file
 - Keep responses concise and code-focused."#;
 
@@ -76,10 +85,12 @@ pub struct ClaudeCodePanel {
     /// Callback to apply an XML code block to the active .ui buffer.
     on_apply_xml_cb: Rc<RefCell<Option<Box<dyn Fn(&str)>>>>,
     /// Callback to apply a Rust code block — opens/creates the companion .rs file.
-    /// Takes (code, companion_path_hint).
     on_apply_rs_cb:  Rc<RefCell<Option<Box<dyn Fn(&str)>>>>,
+    /// Callback to open the diff tool with a diff block.
+    on_apply_diff_cb: Rc<RefCell<Option<Box<dyn Fn(&str)>>>>,
     /// Whether a request is currently in flight.
     busy:          Rc<RefCell<bool>>,
+    spinner:       Spinner,
     /// Handle to the currently-running Claude process (so we can kill it on close).
     child_proc:    Arc<Mutex<Option<u32>>>,  // stores PID
 }
@@ -160,7 +171,11 @@ impl ClaudeCodePanel {
         send_btn.add_css_class("suggested-action");
         send_btn.set_tooltip_text(Some("Send to Claude Code (Ctrl+Enter)"));
 
+        let spinner = Spinner::new();
+        spinner.set_visible(false);
+
         btn_row.append(&include_ui_lbl);
+        btn_row.append(&spinner);
         btn_row.append(&send_btn);
 
         input_box.append(&input_scroll);
@@ -185,6 +200,8 @@ impl ClaudeCodePanel {
             Rc::new(RefCell::new(None));
         let on_apply_rs_cb: Rc<RefCell<Option<Box<dyn Fn(&str)>>>> =
             Rc::new(RefCell::new(None));
+        let on_apply_diff_cb: Rc<RefCell<Option<Box<dyn Fn(&str)>>>> =
+            Rc::new(RefCell::new(None));
         let busy = Rc::new(RefCell::new(false));
         let child_proc = Arc::new(Mutex::new(None));
 
@@ -200,7 +217,9 @@ impl ClaudeCodePanel {
             get_companion_cb,
             on_apply_xml_cb,
             on_apply_rs_cb,
+            on_apply_diff_cb,
             busy,
+            spinner,
             child_proc,
         };
 
@@ -258,6 +277,17 @@ impl ClaudeCodePanel {
     /// Register a callback to apply a Rust code block to the companion .rs file.
     pub fn on_apply_rs<F: Fn(&str) + 'static>(&self, cb: F) {
         *self.on_apply_rs_cb.borrow_mut() = Some(Box::new(cb));
+    }
+
+    /// Register a callback to open the diff tool with a diff block.
+    pub fn on_apply_diff<F: Fn(&str) + 'static>(&self, cb: F) {
+        *self.on_apply_diff_cb.borrow_mut() = Some(Box::new(cb));
+    }
+
+    /// Populate the input text box (used by the robot button in the output panel).
+    pub fn set_input(&self, text: &str) {
+        self.input.buffer().set_text(text);
+        self.input.grab_focus();
     }
 
     pub fn toggle(&self) -> bool {
@@ -336,8 +366,9 @@ impl ClaudeCodePanel {
 
         // Mark busy.
         *self.busy.borrow_mut() = true;
-        self.send_btn.set_sensitive(false);
-        self.send_btn.set_label("…");
+        self.send_btn.set_visible(false);
+        self.spinner.set_visible(true);
+        self.spinner.start();
 
         // Spawn claude process on a background thread using async_channel.
         let (tx, rx) = async_channel::unbounded::<StreamEvent>();
@@ -376,8 +407,9 @@ impl ClaudeCodePanel {
                     }
                     StreamEvent::Done => {
                         *panel.busy.borrow_mut() = false;
-                        panel.send_btn.set_sensitive(true);
-                        panel.send_btn.set_label("Send");
+                        panel.spinner.stop();
+                        panel.spinner.set_visible(false);
+                        panel.send_btn.set_visible(true);
 
                         let final_text = accumulated.borrow().clone();
                         if !final_text.is_empty() {
@@ -460,8 +492,27 @@ impl ClaudeCodePanel {
         let Some(msg_box) = parent.downcast_ref::<GtkBox>() else { return };
 
         for (i, block) in blocks.iter().enumerate() {
-            let is_xml = matches!(block.lang.as_str(), "xml" | "ui");
+            let is_xml  = matches!(block.lang.as_str(), "xml" | "ui");
             let is_rust = matches!(block.lang.as_str(), "rust" | "rs");
+            let is_diff = matches!(block.lang.as_str(), "diff" | "patch");
+
+            let code = block.code.clone();
+
+            if is_diff {
+                // Green "Review Diff" button → opens diff tool
+                let btn = Button::with_label("Review Diff");
+                btn.add_css_class("success");
+                btn.set_halign(gtk4::Align::Start);
+                btn.set_margin_top(4);
+                let cb = self.on_apply_diff_cb.clone();
+                btn.connect_clicked(move |b| {
+                    if let Some(f) = cb.borrow().as_ref() { f(&code); }
+                    b.set_label("Diff opened ✓");
+                    b.set_sensitive(false);
+                });
+                msg_box.append(&btn);
+                continue;
+            }
 
             let btn_label = if is_xml {
                 "Apply to .ui file".to_string()
@@ -478,7 +529,6 @@ impl ClaudeCodePanel {
             btn.set_halign(gtk4::Align::Start);
             btn.set_margin_top(4);
 
-            let code = block.code.clone();
             if is_rust {
                 let apply_cb = self.on_apply_rs_cb.clone();
                 btn.connect_clicked(move |b| {
@@ -489,7 +539,6 @@ impl ClaudeCodePanel {
                     b.set_sensitive(false);
                 });
             } else {
-                // XML blocks and anything else → apply to active buffer
                 let apply_cb = self.on_apply_xml_cb.clone();
                 btn.connect_clicked(move |b| {
                     if let Some(cb) = apply_cb.borrow().as_ref() {
@@ -537,6 +586,7 @@ fn run_claude(
        .arg("stream-json")
        .arg("--system-prompt")
        .arg(SYSTEM_PROMPT)
+       .stdin(Stdio::null())
        .stdout(Stdio::piped())
        .stderr(Stdio::piped());
 

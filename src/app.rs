@@ -718,6 +718,20 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         });
     }
 
+    // Wire robot button in output panel → active AI panel input
+    {
+        let st = state.clone();
+        output.set_on_ask_ai(move |errors| {
+            let s = st.borrow();
+            let prompt = format!("I got these compile errors, can you help fix them?\nPlease respond with a unified ```diff block so I can review and apply it.\n\n```\n{}\n```", errors);
+            match s.ai_stack.visible_child_name().as_deref() {
+                Some("claude") => s.claude_panel.set_input(&prompt),
+                Some("api")    => s.ai_chat_panel.set_input(&prompt),
+                _              => s.claude_panel.set_input(&prompt),
+            }
+        });
+    }
+
     {
         let st = state.clone();
         notebook.on_switch(move |_, tab| {
@@ -1814,19 +1828,19 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         let st = state.clone();
         claude_panel.on_apply_rs(move |code| {
             let s = st.borrow();
+            let current_tab = s.notebook.current_tab();
             // Find the .ui tab's companion path.
-            let companion = s.notebook.current_tab()
+            let companion = current_tab.as_ref()
                 .and_then(|t| t.path())
                 .filter(|p| Canvas::is_ui_file(p))
                 .map(|p| crate::codegen::companion_path(&p));
 
             if let Some(companion) = companion {
-                // Write the code to disk.
+                // Write the code to the companion .rs file.
                 if let Err(e) = std::fs::write(&companion, code) {
                     log::error!("Failed to write companion: {}", e);
                     return;
                 }
-                // Open (or switch to) the companion tab and refresh its buffer.
                 s.notebook.open_file(&companion, &s.cfg);
                 if let Some(tab) = s.notebook.current_tab() {
                     tab.buffer().set_text(code);
@@ -1835,8 +1849,24 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
                         .ok()
                         .and_then(|m| m.modified().ok());
                 }
+            } else if let Some(tab) = current_tab {
+                // Current tab is a .rs file — write code back to it directly.
+                if let Some(path) = tab.path() {
+                    if let Err(e) = std::fs::write(&path, code) {
+                        log::error!("Failed to write {}: {}", path.display(), e);
+                        return;
+                    }
+                    tab.buffer().set_text(code);
+                    tab.buffer().set_modified(false);
+                    *tab.last_mtime.borrow_mut() = std::fs::metadata(&path)
+                        .ok()
+                        .and_then(|m| m.modified().ok());
+                } else {
+                    // Unsaved buffer — just update it in place.
+                    tab.buffer().set_text(code);
+                }
             } else {
-                // No .ui file open — just open a new tab with the rust code.
+                // No tab open — open a new one.
                 s.notebook.new_tab(&s.cfg);
                 if let Some(tab) = s.notebook.current_tab() {
                     tab.buffer().set_text(code);
@@ -1845,6 +1875,20 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
                     }
                 }
             }
+        });
+    }
+
+    // Apply diff block → open diff tool with diff pre-loaded.
+    {
+        let win = window.clone();
+        let st = state.clone();
+        claude_panel.on_apply_diff(move |diff| {
+            let working_dir = st.borrow()
+                .notebook
+                .current_tab()
+                .and_then(|t| t.path())
+                .and_then(|p| p.parent().map(|d| d.to_path_buf()));
+            crate::diff_tool::show_diff_dialog_with_diff(&win, working_dir, diff);
         });
     }
 
@@ -1893,7 +1937,8 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         let st = state.clone();
         ai_chat_panel.on_apply_rs(move |code| {
             let s = st.borrow();
-            let companion = s.notebook.current_tab()
+            let current_tab = s.notebook.current_tab();
+            let companion = current_tab.as_ref()
                 .and_then(|t| t.path())
                 .filter(|p| Canvas::is_ui_file(p))
                 .map(|p| crate::codegen::companion_path(&p));
@@ -1911,6 +1956,20 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
                         .ok()
                         .and_then(|m| m.modified().ok());
                 }
+            } else if let Some(tab) = current_tab {
+                if let Some(path) = tab.path() {
+                    if let Err(e) = std::fs::write(&path, code) {
+                        log::error!("Failed to write {}: {}", path.display(), e);
+                        return;
+                    }
+                    tab.buffer().set_text(code);
+                    tab.buffer().set_modified(false);
+                    *tab.last_mtime.borrow_mut() = std::fs::metadata(&path)
+                        .ok()
+                        .and_then(|m| m.modified().ok());
+                } else {
+                    tab.buffer().set_text(code);
+                }
             } else {
                 s.notebook.new_tab(&s.cfg);
                 if let Some(tab) = s.notebook.current_tab() {
@@ -1920,6 +1979,20 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
                     }
                 }
             }
+        });
+    }
+
+    // Apply diff block → open diff tool (API Chat panel).
+    {
+        let win = window.clone();
+        let st = state.clone();
+        ai_chat_panel.on_apply_diff(move |diff| {
+            let working_dir = st.borrow()
+                .notebook
+                .current_tab()
+                .and_then(|t| t.path())
+                .and_then(|p| p.parent().map(|d| d.to_path_buf()));
+            crate::diff_tool::show_diff_dialog_with_diff(&win, working_dir, diff);
         });
     }
 

@@ -5,7 +5,24 @@ use gtk4::{
 };
 use std::path::PathBuf;
 
+/// Open the diff dialog with a diff already loaded, extracted, and previewed.
+pub fn show_diff_dialog_with_diff(
+    parent: &gtk4::ApplicationWindow,
+    working_dir: Option<PathBuf>,
+    diff_text: &str,
+) {
+    show_diff_dialog_inner(parent, working_dir, Some(diff_text));
+}
+
 pub fn show_diff_dialog(parent: &gtk4::ApplicationWindow, working_dir: Option<PathBuf>) {
+    show_diff_dialog_inner(parent, working_dir, None);
+}
+
+fn show_diff_dialog_inner(
+    parent: &gtk4::ApplicationWindow,
+    working_dir: Option<PathBuf>,
+    preloaded_diff: Option<&str>,
+) {
     let win = Window::builder()
         .title("Apply AI Diff")
         .transient_for(parent)
@@ -200,6 +217,21 @@ pub fn show_diff_dialog(parent: &gtk4::ApplicationWindow, working_dir: Option<Pa
         }
     });
     win.add_controller(key_ctrl);
+
+    // If a diff was pre-loaded, populate and auto-extract.
+    if let Some(diff) = preloaded_diff {
+        paste_buf.set_text(diff);
+        let extracted = extract_diff(diff);
+        if !extracted.is_empty() {
+            populate_preview(&preview_buf, &extracted);
+            paste_buf.set_text(&extracted);
+            status_lbl.set_markup(&format!(
+                "<span foreground='#a6e3a1'>Diff loaded — {} lines. Review and click Apply.</span>",
+                extracted.lines().count()
+            ));
+            apply_btn.set_sensitive(true);
+        }
+    }
 
     win.present();
 }

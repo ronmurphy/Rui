@@ -9,6 +9,7 @@ use std::path::PathBuf;
 
 /// Callback invoked when the user clicks an error location in the Run output.
 pub type ErrorClickCb = Rc<RefCell<Option<Box<dyn Fn(PathBuf, i32, i32)>>>>;
+pub type AskAiCb = Rc<RefCell<Option<Box<dyn Fn(&str)>>>>;
 
 #[derive(Clone)]
 pub struct OutputPanel {
@@ -23,6 +24,10 @@ pub struct OutputPanel {
     link_tag:    TextTag,
     /// Called with (file_path, line, col) when user clicks an error location.
     on_error_click: ErrorClickCb,
+    /// Called with the extracted error text when the robot button is clicked.
+    on_ask_ai: AskAiCb,
+    /// Accumulated error lines (populated by append_run_error).
+    errors: Rc<RefCell<Vec<String>>>,
 }
 
 impl OutputPanel {
@@ -68,6 +73,14 @@ impl OutputPanel {
         header.set_margin_bottom(4);
         header.append(&switcher);
 
+        // Robot button — send errors to active AI panel
+        let robot_btn = Button::with_label("\u{F544}"); // nf-fa-robot
+        robot_btn.add_css_class("flat");
+        robot_btn.add_css_class("nf");
+        robot_btn.set_tooltip_text(Some("Send errors to AI"));
+        robot_btn.set_hexpand(true);
+        robot_btn.set_halign(gtk4::Align::End);
+
         // Close button in the tab bar area
         let close_btn = Button::builder()
             .icon_name("window-close-symbolic")
@@ -75,20 +88,36 @@ impl OutputPanel {
             .tooltip_text("Close panel")
             .build();
         close_btn.add_css_class("flat");
-        close_btn.set_hexpand(true);
-        close_btn.set_halign(gtk4::Align::End);
+        close_btn.set_hexpand(false);
         {
             let w = vbox.clone();
             close_btn.connect_clicked(move |_| {
                 w.set_visible(false);
             });
         }
+        header.append(&robot_btn);
         header.append(&close_btn);
 
         vbox.append(&header);
         vbox.append(&stack);
 
         let on_error_click: ErrorClickCb = Rc::new(RefCell::new(None));
+        let on_ask_ai: AskAiCb = Rc::new(RefCell::new(None));
+        let errors: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
+
+        // Wire robot button → collect errors → call on_ask_ai
+        {
+            let errors_rc = errors.clone();
+            let cb = on_ask_ai.clone();
+            robot_btn.connect_clicked(move |_| {
+                let lines = errors_rc.borrow();
+                if lines.is_empty() { return; }
+                let text = lines.join("\n");
+                if let Some(f) = cb.borrow().as_ref() {
+                    f(&text);
+                }
+            });
+        }
 
         // Wire click handler on the Run text view
         {
@@ -128,7 +157,7 @@ impl OutputPanel {
         Self {
             widget: vbox,
             stack,
-            run_view: run_view,
+            run_view,
             run_buf,
             out_buf,
             prob_buf,
@@ -136,12 +165,20 @@ impl OutputPanel {
             success_tag,
             link_tag,
             on_error_click,
+            on_ask_ai,
+            errors,
         }
     }
 
     /// Set the callback for error-location clicks.
     pub fn set_on_error_click<F: Fn(PathBuf, i32, i32) + 'static>(&self, f: F) {
         *self.on_error_click.borrow_mut() = Some(Box::new(f));
+    }
+
+    /// Set the callback invoked when the robot button is clicked.
+    /// Receives the accumulated error text from the current run.
+    pub fn set_on_ask_ai<F: Fn(&str) + 'static>(&self, f: F) {
+        *self.on_ask_ai.borrow_mut() = Some(Box::new(f));
     }
 
     pub fn append_run_line(&self, text: &str) {
@@ -158,6 +195,7 @@ impl OutputPanel {
         } else {
             append_line(&self.run_buf, text, Some(&self.error_tag));
         }
+        self.errors.borrow_mut().push(text.to_string());
         self.scroll_run_to_bottom();
         self.stack.set_visible_child_name("run");
     }
@@ -169,6 +207,7 @@ impl OutputPanel {
 
     pub fn clear_run(&self) {
         self.run_buf.set_text("");
+        self.errors.borrow_mut().clear();
     }
 
     pub fn append_output(&self, text: &str) {

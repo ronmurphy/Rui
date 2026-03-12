@@ -12,7 +12,7 @@
 use gtk4::prelude::*;
 use gtk4::{
     Box as GtkBox, Button, DropDown, Entry, Label, Orientation,
-    Popover, ScrolledWindow, Separator, StringList, TextView, WrapMode,
+    Popover, ScrolledWindow, Separator, Spinner, StringList, TextView, WrapMode,
     InputHints, InputPurpose,
 };
 use gtk4::glib;
@@ -61,8 +61,17 @@ Key facts about the companion Rust code:
 - Uses gtk4::prelude::* for trait methods
 
 When you respond:
-- Wrap UI XML changes in ```xml code blocks
-- Wrap Rust code changes in ```rust code blocks
+- For NEW code or full rewrites: wrap in ```xml or ```rust code blocks
+- For FIXING compile errors or small edits: respond with a unified git diff in a ```diff code block
+  The diff format must be a valid unified diff:
+  ```diff
+  --- a/src/layout_app.rs
+  +++ b/src/layout_app.rs
+  @@ -10,6 +10,7 @@
+   context line
+  -old line
+  +new line
+  ```
 - The user can apply each block independently to the correct file
 - Keep responses concise and code-focused."#;
 
@@ -121,8 +130,10 @@ pub struct AiChatPanel {
     get_companion_cb: Rc<RefCell<Option<Box<dyn Fn() -> Option<(String, String)>>>>>,
     on_apply_xml_cb:  Rc<RefCell<Option<Box<dyn Fn(&str)>>>>,
     on_apply_rs_cb:   Rc<RefCell<Option<Box<dyn Fn(&str)>>>>,
+    on_apply_diff_cb: Rc<RefCell<Option<Box<dyn Fn(&str)>>>>,
 
     busy:       Rc<RefCell<bool>>,
+    spinner:    Spinner,
     child_proc: Arc<Mutex<Option<u32>>>,  // unused, kept for API parity
 }
 
@@ -208,7 +219,11 @@ impl AiChatPanel {
         send_btn.add_css_class("suggested-action");
         send_btn.set_tooltip_text(Some("Send (Ctrl+Enter)"));
 
+        let spinner = Spinner::new();
+        spinner.set_visible(false);
+
         btn_row.append(&ctx_lbl);
+        btn_row.append(&spinner);
         btn_row.append(&send_btn);
         input_box.append(&input_scroll);
         input_box.append(&btn_row);
@@ -235,7 +250,9 @@ impl AiChatPanel {
             get_companion_cb: Rc::new(RefCell::new(None)),
             on_apply_xml_cb:  Rc::new(RefCell::new(None)),
             on_apply_rs_cb:   Rc::new(RefCell::new(None)),
+            on_apply_diff_cb: Rc::new(RefCell::new(None)),
             busy:             Rc::new(RefCell::new(false)),
+            spinner,
             child_proc:       Arc::new(Mutex::new(None)),
         };
 
@@ -289,8 +306,17 @@ impl AiChatPanel {
     pub fn on_apply_rs<F: Fn(&str) + 'static>(&self, cb: F) {
         *self.on_apply_rs_cb.borrow_mut() = Some(Box::new(cb));
     }
+    pub fn on_apply_diff<F: Fn(&str) + 'static>(&self, cb: F) {
+        *self.on_apply_diff_cb.borrow_mut() = Some(Box::new(cb));
+    }
 
     // ── Toggle / visibility ───────────────────────────────────────────────────
+
+    /// Populate the input text box (used by the robot button in the output panel).
+    pub fn set_input(&self, text: &str) {
+        self.input.buffer().set_text(text);
+        self.input.grab_focus();
+    }
 
     pub fn toggle(&self) -> bool {
         let visible = !self.widget.is_visible();
@@ -455,8 +481,9 @@ impl AiChatPanel {
         let response_label = self.add_streaming_placeholder();
 
         *self.busy.borrow_mut() = true;
-        self.send_btn.set_sensitive(false);
-        self.send_btn.set_label("…");
+        self.send_btn.set_visible(false);
+        self.spinner.set_visible(true);
+        self.spinner.start();
 
         // Build message history for API
         let mut api_messages: Vec<(String, String)> = self.messages
@@ -511,8 +538,9 @@ impl AiChatPanel {
                     }
                     StreamEvent::Done => {
                         *panel.busy.borrow_mut() = false;
-                        panel.send_btn.set_sensitive(true);
-                        panel.send_btn.set_label("Send");
+                        panel.spinner.stop();
+                        panel.spinner.set_visible(false);
+                        panel.send_btn.set_visible(true);
 
                         let final_text = accumulated.borrow().clone();
                         if !final_text.is_empty() {
@@ -589,6 +617,24 @@ impl AiChatPanel {
         for (i, block) in blocks.iter().enumerate() {
             let is_xml  = matches!(block.lang.as_str(), "xml" | "ui");
             let is_rust = matches!(block.lang.as_str(), "rust" | "rs");
+            let is_diff = matches!(block.lang.as_str(), "diff" | "patch");
+
+            let code = block.code.clone();
+
+            if is_diff {
+                let btn = Button::with_label("Review Diff");
+                btn.add_css_class("success");
+                btn.set_halign(gtk4::Align::Start);
+                btn.set_margin_top(4);
+                let cb = self.on_apply_diff_cb.clone();
+                btn.connect_clicked(move |b| {
+                    if let Some(f) = cb.borrow().as_ref() { f(&code); }
+                    b.set_label("Diff opened ✓");
+                    b.set_sensitive(false);
+                });
+                msg_box.append(&btn);
+                continue;
+            }
 
             let btn_label = if is_xml  { "Apply to .ui file".to_string() }
                        else if is_rust { "Apply to .rs file".to_string() }
@@ -600,7 +646,6 @@ impl AiChatPanel {
             btn.set_halign(gtk4::Align::Start);
             btn.set_margin_top(4);
 
-            let code = block.code.clone();
             if is_rust {
                 let cb = self.on_apply_rs_cb.clone();
                 btn.connect_clicked(move |b| {
