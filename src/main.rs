@@ -39,6 +39,7 @@ mod ai_panel;
 mod claude_code;
 mod ai_provider;
 mod ai_chat_panel;
+mod node_view;
 
 fn main() {
     env_logger::init();
