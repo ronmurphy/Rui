@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <object class="GtkApplicationWindow" id="main_window">
+    <property name="title">SameGame</property>
+    <property name="default-width">580</property>
+    <property name="default-height">710</property>
+    <child>
+      <object class="GtkBox" id="root_box">
+        <property name="orientation">vertical</property>
+        <property name="spacing">0</property>
+
+        <!-- Header bar -->
+        <child>
+          <object class="GtkBox" id="header_box">
+            <property name="orientation">horizontal</property>
+            <property name="spacing">12</property>
+            <child>
+              <object class="GtkLabel" id="title_label">
+                <property name="label">🎮  SameGame</property>
+                <property name="hexpand">true</property>
+                <property name="xalign">0</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkLabel" id="score_label">
+                <property name="label">Score: 0</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkButton" id="new_game_button">
+                <property name="label">New Game</property>
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <!-- Status line -->
+        <child>
+          <object class="GtkLabel" id="status_label">
+            <property name="label">Click a group of 3+ matching tiles!</property>
+            <property name="xalign">0</property>
+          </object>
+        </child>
+
+        <!-- Game grid injected here at runtime -->
+        <child>
+          <object class="GtkBox" id="grid_container">
+            <property name="hexpand">true</property>
+            <property name="vexpand">true</property>
+            <property name="halign">center</property>
+            <property name="valign">center</property>
+          </object>
+        </child>
+
+      </object>
+    </child>
+  </object>
+</interface>

@@ -135,7 +135,7 @@ fn show_diff_dialog_inner(
     let apply_btn = Button::with_label("Apply Diff");
     apply_btn.add_css_class("suggested-action");
     apply_btn.set_sensitive(false);
-    apply_btn.set_tooltip_text(Some("Apply the diff using git apply (runs in the git root)"));
+    apply_btn.set_tooltip_text(Some("Apply the diff (tries git apply, patch, then manual fallback)"));
 
     let close_btn = Button::with_label("Close");
 
@@ -218,22 +218,50 @@ fn show_diff_dialog_inner(
     });
     win.add_controller(key_ctrl);
 
-    // If a diff was pre-loaded, populate and auto-extract.
+    // If a diff was pre-loaded, skip extract_diff (text is already a clean diff
+    // from a ```diff code block) — just normalize and preview directly.
     if let Some(diff) = preloaded_diff {
-        paste_buf.set_text(diff);
-        let extracted = extract_diff(diff);
-        if !extracted.is_empty() {
-            populate_preview(&preview_buf, &extracted);
-            paste_buf.set_text(&extracted);
+        let cleaned = normalize_diff(diff);
+        if !cleaned.is_empty() {
+            paste_buf.set_text(&cleaned);
+            populate_preview(&preview_buf, &cleaned);
             status_lbl.set_markup(&format!(
                 "<span foreground='#a6e3a1'>Diff loaded — {} lines. Review and click Apply.</span>",
-                extracted.lines().count()
+                cleaned.lines().count()
             ));
             apply_btn.set_sensitive(true);
+        } else {
+            paste_buf.set_text(diff);
+            status_lbl.set_markup(
+                "<span foreground='#f38ba8'>Could not parse diff. You can edit it above, then Extract &amp; Preview.</span>"
+            );
         }
     }
 
     win.present();
+}
+
+/// Normalize a diff that's already been extracted from a code block.
+/// Ensures it has proper --- / +++ headers and @@ hunks.
+fn normalize_diff(text: &str) -> String {
+    let text = text.trim();
+    if text.is_empty() { return String::new(); }
+
+    // Check if it already looks like a valid diff
+    let has_header = text.lines().any(|l| l.starts_with("--- "));
+    let has_hunk   = text.lines().any(|l| l.starts_with("@@ "));
+
+    if has_header && has_hunk {
+        // Already a proper diff — just ensure trailing newline
+        return format!("{}\n", text);
+    }
+
+    // If it has hunks but no header, it's malformed — can't fix that easily
+    if has_hunk && !has_header {
+        return format!("{}\n", text);
+    }
+
+    String::new()
 }
 
 fn extract_diff(text: &str) -> String {
@@ -326,50 +354,355 @@ fn apply_diff(diff: &str, working_dir: Option<&std::path::Path>) -> Result<Strin
 
     let git_root = working_dir
         .and_then(find_git_root)
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+        .unwrap_or_else(|| working_dir
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default()));
 
-    let check = std::process::Command::new("git")
-        .args(["apply", "--check", tmp.to_str().unwrap_or("")])
-        .current_dir(&git_root)
-        .output()
-        .map_err(|e| format!("Could not run git: {}", e))?;
+    let tmp_str = tmp.to_str().unwrap_or("");
 
-    if !check.status.success() {
-        let stderr = String::from_utf8_lossy(&check.stderr).to_string();
-        let patch = std::process::Command::new("patch")
-            .args(["-p1", "--dry-run", "-i", tmp.to_str().unwrap_or("")])
-            .current_dir(&git_root)
-            .output()
-            .map_err(|e| format!("git apply failed and patch not available: {} — {}", stderr, e))?;
-        if !patch.status.success() {
+    // Strategy 1: git apply (strict)
+    if try_git_apply(&git_root, tmp_str, &[]).is_ok() {
+        return Ok(format!("Applied with git apply in {}", git_root.display()));
+    }
+
+    // Strategy 2: git apply --ignore-whitespace
+    if try_git_apply(&git_root, tmp_str, &["--ignore-whitespace"]).is_ok() {
+        return Ok(format!("Applied with git apply --ignore-whitespace in {}", git_root.display()));
+    }
+
+    // Strategy 3: git apply --3way --ignore-whitespace
+    if try_git_apply(&git_root, tmp_str, &["--3way", "--ignore-whitespace"]).is_ok() {
+        return Ok(format!("Applied with git apply --3way in {}", git_root.display()));
+    }
+
+    // Strategy 4: patch -p1 with fuzz
+    if try_patch(&git_root, tmp_str, &["-p1", "--fuzz=3"]).is_ok() {
+        return Ok("Applied with patch -p1 --fuzz=3".to_string());
+    }
+
+    // Strategy 5: patch -p0 with fuzz (for diffs without a/ b/ prefix)
+    if try_patch(&git_root, tmp_str, &["-p0", "--fuzz=3"]).is_ok() {
+        return Ok("Applied with patch -p0 --fuzz=3".to_string());
+    }
+
+    // Strategy 6: manual fuzzy apply
+    match manual_apply(diff, &git_root) {
+        Ok(msg) => return Ok(msg),
+        Err(manual_err) => {
+            // Collect the original git error for the message
+            let git_err = std::process::Command::new("git")
+                .args(["apply", "--check", "--ignore-whitespace", tmp_str])
+                .current_dir(&git_root)
+                .output()
+                .map(|o| String::from_utf8_lossy(&o.stderr).to_string())
+                .unwrap_or_default();
             return Err(format!(
-                "git apply check failed: {}",
-                stderr.trim()
+                "All strategies failed.\ngit apply: {}\nmanual: {}\nTip: edit the diff above to fix context lines, then retry.",
+                git_err.trim(), manual_err
             ));
         }
-        let result = std::process::Command::new("patch")
-            .args(["-p1", "-i", tmp.to_str().unwrap_or("")])
-            .current_dir(&git_root)
-            .output()
-            .map_err(|e| format!("patch failed: {}", e))?;
-        if result.status.success() {
-            return Ok("Applied with patch(1) successfully.".to_string());
+    }
+}
+
+fn try_git_apply(dir: &std::path::Path, patch_file: &str, extra_args: &[&str]) -> Result<(), ()> {
+    // Check first
+    let mut args = vec!["apply", "--check"];
+    args.extend_from_slice(extra_args);
+    args.push(patch_file);
+    let check = std::process::Command::new("git")
+        .args(&args)
+        .current_dir(dir)
+        .output()
+        .map_err(|_| ())?;
+    if !check.status.success() { return Err(()); }
+
+    // Actually apply
+    let mut args = vec!["apply"];
+    args.extend_from_slice(extra_args);
+    args.push(patch_file);
+    let apply = std::process::Command::new("git")
+        .args(&args)
+        .current_dir(dir)
+        .output()
+        .map_err(|_| ())?;
+    if apply.status.success() { Ok(()) } else { Err(()) }
+}
+
+fn try_patch(dir: &std::path::Path, patch_file: &str, args: &[&str]) -> Result<(), ()> {
+    // Dry run first
+    let mut dry_args: Vec<&str> = args.to_vec();
+    dry_args.extend_from_slice(&["--dry-run", "-i", patch_file]);
+    let check = std::process::Command::new("patch")
+        .args(&dry_args)
+        .current_dir(dir)
+        .output()
+        .map_err(|_| ())?;
+    if !check.status.success() { return Err(()); }
+
+    // Actually apply
+    let mut real_args: Vec<&str> = args.to_vec();
+    real_args.extend_from_slice(&["-i", patch_file]);
+    let apply = std::process::Command::new("patch")
+        .args(&real_args)
+        .current_dir(dir)
+        .output()
+        .map_err(|_| ())?;
+    if apply.status.success() { Ok(()) } else { Err(()) }
+}
+
+// ── Manual fuzzy diff apply ──────────────────────────────────────────────────
+
+/// Parse a unified diff and apply it by fuzzy-matching context lines in the file.
+fn manual_apply(diff: &str, base_dir: &std::path::Path) -> Result<String, String> {
+    let hunks = parse_diff_hunks(diff)?;
+    if hunks.is_empty() {
+        return Err("No hunks found in diff".into());
+    }
+
+    // Group hunks by target file
+    let mut by_file: std::collections::HashMap<String, Vec<&DiffHunk>> = std::collections::HashMap::new();
+    for hunk in &hunks {
+        by_file.entry(hunk.file.clone()).or_default().push(hunk);
+    }
+
+    let mut applied_count = 0;
+    for (file_path, file_hunks) in &by_file {
+        let full_path = base_dir.join(file_path);
+        if !full_path.exists() {
+            return Err(format!("File not found: {} (looked in {})", file_path, base_dir.display()));
+        }
+
+        let original = std::fs::read_to_string(&full_path)
+            .map_err(|e| format!("Could not read {}: {}", file_path, e))?;
+        let mut lines: Vec<String> = original.lines().map(|l| l.to_string()).collect();
+
+        // Apply hunks in reverse order so line offsets don't shift
+        let mut sorted_hunks: Vec<&&DiffHunk> = file_hunks.iter().collect();
+        sorted_hunks.sort_by(|a, b| b.old_start.cmp(&a.old_start));
+
+        for hunk in sorted_hunks {
+            lines = apply_hunk(&lines, hunk)?;
+            applied_count += 1;
+        }
+
+        let result = lines.join("\n");
+        // Preserve trailing newline if original had one
+        let result = if original.ends_with('\n') && !result.ends_with('\n') {
+            result + "\n"
         } else {
-            return Err(String::from_utf8_lossy(&result.stderr).to_string());
+            result
+        };
+        std::fs::write(&full_path, &result)
+            .map_err(|e| format!("Could not write {}: {}", file_path, e))?;
+    }
+
+    Ok(format!("Applied {} hunk(s) manually to {} file(s)", applied_count, by_file.len()))
+}
+
+struct DiffHunk {
+    file:      String,
+    old_start: usize,
+    context:   Vec<String>,  // lines from the '-' and ' ' side (what we search for)
+    removals:  Vec<usize>,   // indices into `context` that are removals (not context)
+    additions: Vec<String>,  // lines to add ('+' lines)
+}
+
+fn parse_diff_hunks(diff: &str) -> Result<Vec<DiffHunk>, String> {
+    let lines: Vec<&str> = diff.lines().collect();
+    let mut hunks = Vec::new();
+    let mut current_file = String::new();
+    let mut i = 0;
+
+    while i < lines.len() {
+        let line = lines[i];
+
+        // Track the target file from +++ header
+        if let Some(path) = line.strip_prefix("+++ ") {
+            current_file = path
+                .strip_prefix("b/").unwrap_or(path)
+                .to_string();
+            i += 1;
+            continue;
+        }
+
+        // Parse @@ header
+        if line.starts_with("@@ ") {
+            if current_file.is_empty() {
+                i += 1;
+                continue;
+            }
+            let old_start = parse_hunk_header(line).unwrap_or(1);
+            i += 1;
+
+            // Collect hunk body
+            let mut context = Vec::new();
+            let mut removals = Vec::new();
+            let mut additions = Vec::new();
+
+            while i < lines.len() {
+                let l = lines[i];
+                if l.starts_with("@@ ") || l.starts_with("--- ") || l.starts_with("+++ ") || l.starts_with("diff ") {
+                    break;
+                }
+                if let Some(rem) = l.strip_prefix('-') {
+                    removals.push(context.len());
+                    context.push(rem.to_string());
+                } else if let Some(add) = l.strip_prefix('+') {
+                    additions.push(add.to_string());
+                } else if let Some(ctx) = l.strip_prefix(' ') {
+                    context.push(ctx.to_string());
+                } else if l == "\\ No newline at end of file" {
+                    // skip
+                } else {
+                    // Unrecognized line — might be context without leading space
+                    // (common AI mistake). Treat as context.
+                    context.push(l.to_string());
+                }
+                i += 1;
+            }
+
+            hunks.push(DiffHunk {
+                file: current_file.clone(),
+                old_start,
+                context,
+                removals,
+                additions,
+            });
+            continue;
+        }
+
+        i += 1;
+    }
+
+    Ok(hunks)
+}
+
+fn parse_hunk_header(line: &str) -> Option<usize> {
+    // @@ -10,6 +10,7 @@ optional context
+    let after_at = line.strip_prefix("@@ -")?;
+    let comma_or_space = after_at.find(|c: char| c == ',' || c == ' ')?;
+    after_at[..comma_or_space].parse::<usize>().ok()
+}
+
+fn apply_hunk(lines: &[String], hunk: &DiffHunk) -> Result<Vec<String>, String> {
+    if hunk.context.is_empty() && hunk.additions.is_empty() {
+        return Ok(lines.to_vec());
+    }
+
+    // Build the "old" lines we need to find (context + removals in order)
+    // and the "new" lines to replace with (context minus removals + additions)
+    let removal_set: std::collections::HashSet<usize> = hunk.removals.iter().cloned().collect();
+
+    // Try to find the context block in the file, starting near old_start
+    let search_start = if hunk.old_start > 0 { hunk.old_start - 1 } else { 0 };
+    let match_pos = find_context(lines, &hunk.context, search_start);
+
+    let match_pos = match match_pos {
+        Some(pos) => pos,
+        None => {
+            // Context not found — generate helpful error
+            let first_ctx = hunk.context.first().map(|s| s.as_str()).unwrap_or("(empty)");
+            return Err(format!(
+                "Could not find matching context near line {} — first context line: \"{}\"",
+                hunk.old_start, first_ctx
+            ));
+        }
+    };
+
+    // Build the replacement
+    let mut replacement = Vec::new();
+    let mut ctx_idx = 0;
+    let mut add_idx = 0;
+
+    // Walk through context lines; when we hit a removal, skip it and insert additions instead
+    // Additions go before the first non-removal context line after a removal block
+    let mut pending_additions = true;
+    for (i, ctx_line) in hunk.context.iter().enumerate() {
+        if removal_set.contains(&i) {
+            // This is a removed line — skip it
+            // Insert any pending additions at the first removal
+            if pending_additions && add_idx < hunk.additions.len() {
+                // We'll insert additions after processing all consecutive removals
+            }
+            continue;
+        } else {
+            // Context line (kept) — but first, flush any pending additions
+            if pending_additions {
+                while add_idx < hunk.additions.len() {
+                    replacement.push(hunk.additions[add_idx].clone());
+                    add_idx += 1;
+                }
+                pending_additions = false;
+            }
+            replacement.push(ctx_line.clone());
+        }
+        // Reset pending flag when we see a removal
+        if i + 1 < hunk.context.len() && removal_set.contains(&(i + 1)) {
+            pending_additions = true;
+        }
+    }
+    // Flush remaining additions
+    while add_idx < hunk.additions.len() {
+        replacement.push(hunk.additions[add_idx].clone());
+        add_idx += 1;
+    }
+
+    // Splice
+    let mut result = Vec::with_capacity(lines.len() + replacement.len());
+    result.extend_from_slice(&lines[..match_pos]);
+    result.extend(replacement);
+    result.extend_from_slice(&lines[match_pos + hunk.context.len()..]);
+
+    Ok(result)
+}
+
+/// Find the position in `lines` where `context` best matches, starting near `hint`.
+/// Uses fuzzy matching: tries exact first, then trims whitespace.
+fn find_context(lines: &[String], context: &[String], hint: usize) -> Option<usize> {
+    if context.is_empty() { return Some(hint.min(lines.len())); }
+    if context.len() > lines.len() { return None; }
+
+    let max_pos = lines.len() - context.len();
+
+    // Try exact match near hint first, then expand outward
+    let hint = hint.min(max_pos);
+    for offset in 0..=max_pos {
+        for &dir in &[0i32, 1, -1] {
+            let pos = if dir == 0 {
+                hint
+            } else if dir > 0 {
+                if hint + offset <= max_pos { hint + offset } else { continue }
+            } else {
+                if offset <= hint { hint - offset } else { continue }
+            };
+            if pos > max_pos { continue; }
+
+            if context_matches_at(lines, context, pos) {
+                return Some(pos);
+            }
         }
     }
 
-    let apply = std::process::Command::new("git")
-        .args(["apply", tmp.to_str().unwrap_or("")])
-        .current_dir(&git_root)
-        .output()
-        .map_err(|e| format!("Could not run git apply: {}", e))?;
-
-    if apply.status.success() {
-        Ok(format!("Applied successfully in {}", git_root.display()))
-    } else {
-        Err(String::from_utf8_lossy(&apply.stderr).to_string())
+    // Fuzzy: try trimmed whitespace comparison
+    for pos in 0..=max_pos {
+        if context_matches_fuzzy(lines, context, pos) {
+            return Some(pos);
+        }
     }
+
+    None
+}
+
+fn context_matches_at(lines: &[String], context: &[String], pos: usize) -> bool {
+    context.iter().enumerate().all(|(i, ctx)| {
+        pos + i < lines.len() && lines[pos + i] == *ctx
+    })
+}
+
+fn context_matches_fuzzy(lines: &[String], context: &[String], pos: usize) -> bool {
+    context.iter().enumerate().all(|(i, ctx)| {
+        pos + i < lines.len() && lines[pos + i].trim() == ctx.trim()
+    })
 }
 
 fn find_git_root(start: &std::path::Path) -> Option<PathBuf> {
