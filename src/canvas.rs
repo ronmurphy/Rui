@@ -111,7 +111,7 @@ impl Canvas {
         let status = Label::new(Some("Open a .ui file or create one via File → New .ui File"));
         status.set_halign(gtk4::Align::Center);
         status.set_valign(gtk4::Align::Center);
-        status.set_vexpand(true);
+        status.set_vexpand(false);
         status.set_margin_start(24);
         status.set_margin_end(24);
         status.set_margin_top(8);
@@ -281,7 +281,6 @@ impl Canvas {
         if xml.trim().is_empty() {
             self.status.set_text("Empty buffer");
             self.status.set_visible(true);
-            self.status.set_vexpand(true);
             return;
         }
 
@@ -292,7 +291,6 @@ impl Canvas {
                 let msg = format!("XML error: {}", e);
                 self.status.set_text(&msg);
                 self.status.set_visible(true);
-                self.status.set_vexpand(true);
                 // Also send to the output panel if a callback is registered
                 if let Some(cb) = self.on_xml_error.borrow().as_ref() {
                     cb(&msg);
@@ -341,7 +339,6 @@ impl Canvas {
         if object_nodes.is_empty() {
             self.status.set_text("No <object> elements found");
             self.status.set_visible(true);
-            self.status.set_vexpand(true);
             return;
         }
 
@@ -373,7 +370,6 @@ impl Canvas {
         if count == 0 {
             self.status.set_text("No renderable widgets found in .ui");
             self.status.set_visible(true);
-            self.status.set_vexpand(true);
             return;
         }
 
@@ -395,7 +391,6 @@ impl Canvas {
         *self.current_child.borrow_mut() = Some(result_box.upcast::<Widget>());
         // Hide placeholder, let the scroll area fill the canvas
         self.status.set_visible(false);
-        self.status.set_vexpand(false);
     }
 
     /// Clear the preview pane.
@@ -410,7 +405,6 @@ impl Canvas {
         self.container.set_size_request(-1, -1);
         self.status.set_text("Open a .ui file or create one via File → New .ui File");
         self.status.set_visible(true);
-        self.status.set_vexpand(true);
     }
 
     /// Connect to a sourceview5 Buffer so the preview auto-updates
