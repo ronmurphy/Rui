@@ -81,14 +81,13 @@ impl EditorTab {
     }
 
     pub fn apply_scheme(&self, scheme_id: &str) {
-        if scheme_id.is_empty() {
-            // Empty → let GtkSourceView use its default (follows GTK theme).
-            return;
-        }
         let mgr = StyleSchemeManager::default();
-        if let Some(scheme) = mgr.scheme(scheme_id) {
-            self.buffer().set_style_scheme(Some(&scheme));
-        }
+        let scheme = if scheme_id.is_empty() {
+            None  // clears explicit scheme → GtkSourceView auto-selects for GTK dark/light
+        } else {
+            mgr.scheme(scheme_id)
+        };
+        self.buffer().set_style_scheme(scheme.as_ref());
     }
 
     pub fn buffer(&self) -> Buffer {

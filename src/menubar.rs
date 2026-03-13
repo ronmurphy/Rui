@@ -115,7 +115,7 @@ pub fn build(app: &Application) -> (Menu, Menu, Menu) {
         "cut", "copy", "paste", "select-all", "find", "find-replace", "goto-line",
         "toggle-sidebar", "toggle-output", "toggle-canvas", "toggle-toolbox", "toggle-preview", "toggle-minimap",
         "layout-code", "layout-designer",
-        "run", "build", "stop", "open-browser", "generate-handlers", "template-library",
+        "run", "build", "build-install", "stop", "open-browser", "generate-handlers", "template-library",
         "ai-open", "claude-code-open", "api-chat-open", "ai-copy-file", "ai-copy-selection", "ai-apply-diff",
         "help", "about",
     ] {

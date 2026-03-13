@@ -48,16 +48,16 @@ else
 fi
 
 if pkg-config --exists webkitgtk-6.0 2>/dev/null; then
-    ok "webkit2gtk-6.0"
+    ok "webkitgtk-6.0"
 else
-    echo -e "  ${BLUE}ℹ${NC} webkit2gtk-6.0 not found — building without preview/AI panel"
+    echo -e "  ${BLUE}ℹ${NC} webkitgtk-6.0 not found — building without preview/AI panel"
 fi
 
 if [ ${#missing[@]} -gt 0 ]; then
     err "Missing dependencies: ${missing[*]}"
     echo ""
     echo "  Install on Arch Linux:"
-    echo "    sudo pacman -S rust gtk4 gtksourceview5 webkit2gtk-6.0"
+    echo "    sudo pacman -S rust gtk4 gtksourceview5 webkitgtk-6.0"
     echo ""
     echo "  Then re-run this script."
     exit 1

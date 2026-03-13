@@ -1601,6 +1601,7 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         let app_weak = gtk4::glib::object::ObjectExt::downgrade(app);
         let dark_btn_ref = dark_btn.clone();
         let dark_state_ref = dark_state.clone();
+        let st = state.clone();
         menubar::connect_action(app, "toggle-dark", move || {
             let now_dark = !dark_state_ref.get();
             dark_state_ref.set(now_dark);
@@ -1622,6 +1623,13 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
             let mut editor_cfg = crate::config::load();
             editor_cfg.dark_mode = now_dark;
             crate::config::save_editor_config(&editor_cfg);
+            // Re-apply colour scheme to all open tabs so SourceView matches the GTK theme.
+            // Dark mode → use the configured scheme; light mode → clear to GtkSourceView auto.
+            let scheme_id = if now_dark { editor_cfg.color_scheme.as_str() } else { "" };
+            let s = st.borrow();
+            for tab in s.notebook.all_tabs() {
+                tab.apply_scheme(scheme_id);
+            }
         });
     }
 
@@ -1713,7 +1721,7 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
                 });
 
             if let Some(cd) = cargo_dir {
-                s.runner.run_in_dir(&cd, &["build", "--release"], &s.output);
+                s.runner.check_then_build_in_dir(&cd, &["build", "--release"], &s.output);
             } else if let Some(tab) = s.notebook.current_tab() {
                 if let Some(path) = tab.path() {
                     let output = s.output.clone();
@@ -1749,7 +1757,7 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
                     s.output.append_run_error(&format!("Failed to generate install files: {}", e));
                     return;
                 }
-                s.runner.run_in_dir(&cd, &["build", "--release"], &s.output);
+                s.runner.check_then_build_in_dir(&cd, &["build", "--release"], &s.output);
             } else {
                 s.output.append_run_error("No Cargo.toml found — open a project first.");
                 s.output.show_panel();

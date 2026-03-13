@@ -239,6 +239,71 @@ impl RunManager {
         });
     }
 
+    /// Run `cargo check` as a pre-flight, then — only if it passes — run the
+    /// given `build_args` (e.g. `&["build", "--release"]`). Both phases stream
+    /// to the output panel; any error stops the sequence.
+    pub fn check_then_build_in_dir(
+        &self,
+        dir: &Path,
+        build_args: &[&str],
+        output: &OutputPanel,
+    ) {
+        self.stop_flag.store(false, Ordering::Relaxed);
+
+        let cwd = dir.to_path_buf();
+        let build_args_owned: Vec<String> = build_args.iter().map(|s| s.to_string()).collect();
+
+        output.clear_run();
+        output.show_panel();
+        output.switch_to_run();
+        output.append_run_line("▶ cargo check  (pre-flight)");
+
+        let stop_flag = self.stop_flag.clone();
+        let (tx, rx) = async_channel::unbounded::<RunEvent>();
+
+        std::thread::spawn(move || {
+            let check_ok = run_cargo_sync(&cwd, &["check"], &tx, &stop_flag);
+
+            if !check_ok || stop_flag.load(Ordering::Relaxed) {
+                let exit_code = if stop_flag.load(Ordering::Relaxed) { None } else { Some(1) };
+                let _ = tx.send_blocking(RunEvent::Done { success: false, exit_code });
+                return;
+            }
+
+            let args_refs: Vec<&str> = build_args_owned.iter().map(|s| s.as_str()).collect();
+            let _ = tx.send_blocking(RunEvent::Stdout(format!(
+                "\n── Pre-flight passed ✓ ──  running: cargo {} ──",
+                build_args_owned.join(" ")
+            )));
+
+            let build_ok = run_cargo_sync(&cwd, &args_refs, &tx, &stop_flag);
+            let exit_code = if build_ok { Some(0) } else { Some(1) };
+            let _ = tx.send_blocking(RunEvent::Done { success: build_ok, exit_code });
+        });
+
+        let output = output.clone();
+        gtk4::glib::spawn_future_local(async move {
+            while let Ok(ev) = rx.recv().await {
+                match ev {
+                    RunEvent::Stdout(line) => output.append_run_line(&line),
+                    RunEvent::Stderr(line) => output.append_run_error(&line),
+                    RunEvent::Done { success, exit_code } => {
+                        let msg = match exit_code {
+                            Some(code) => format!("── Process exited with code {} ──", code),
+                            None => "── Process terminated ──".to_string(),
+                        };
+                        if success {
+                            output.append_run_success(&msg);
+                        } else {
+                            output.append_run_error(&msg);
+                        }
+                        break;
+                    }
+                }
+            }
+        });
+    }
+
     pub fn open_in_browser(path: &Path) {
         let url = format!("file://{}", path.display());
         let _ = Command::new("xdg-open").arg(&url).spawn();
@@ -326,6 +391,56 @@ fn build_command(path: &Path) -> Option<(String, Vec<String>, PathBuf)> {
 
         _ => None,
     }
+}
+
+/// Run a single `cargo` command synchronously (blocking the calling thread),
+/// streaming stdout/stderr via `tx`. Returns `true` if the process exited with
+/// code 0 and was not stopped.
+fn run_cargo_sync(
+    dir: &Path,
+    args: &[&str],
+    tx: &async_channel::Sender<RunEvent>,
+    stop_flag: &Arc<AtomicBool>,
+) -> bool {
+    let mut child = match Command::new("cargo")
+        .args(args)
+        .current_dir(dir)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = tx.send_blocking(RunEvent::Stderr(format!("Failed to start cargo: {}", e)));
+            return false;
+        }
+    };
+
+    let stdout = child.stdout.take();
+    let stderr_pipe = child.stderr.take();
+    let tx2 = tx.clone();
+    let flag2 = stop_flag.clone();
+
+    if let Some(err) = stderr_pipe {
+        std::thread::spawn(move || {
+            for line in std::io::BufReader::new(err).lines() {
+                if flag2.load(Ordering::Relaxed) { break; }
+                if let Ok(l) = line { let _ = tx2.send_blocking(RunEvent::Stderr(l)); }
+            }
+        });
+    }
+
+    if let Some(out) = stdout {
+        for line in std::io::BufReader::new(out).lines() {
+            if stop_flag.load(Ordering::Relaxed) {
+                let _ = child.kill();
+                return false;
+            }
+            if let Ok(l) = line { let _ = tx.send_blocking(RunEvent::Stdout(l)); }
+        }
+    }
+
+    child.wait().ok().and_then(|s| s.code()) == Some(0)
 }
 
 fn find_cargo_toml(path: &Path) -> Option<PathBuf> {

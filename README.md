@@ -7,31 +7,40 @@
 
 Rui (said like "Rooey" — **R** for Rust + **UI**) is a native GTK4 application for visually designing `.ui` files used by GTK/Libadwaita Rust applications. It aims to be the missing GUI builder in the Rust desktop ecosystem.
 
-## What It Does Today (v0.3)
+## What It Does (v0.3)
 
-- Syntax-highlighted `.ui` / XML editing (GtkSourceView 5)
-- Tabbed editor with file tree sidebar and widget outline tree
-- Find/replace with regex
+**Editor**
+- Tabbed editor with syntax highlighting (GtkSourceView 5) for `.ui`, `.rs`, `.py`, `.js`, `.ts`, `.sh`, and HTML/CSS
+- File tree sidebar and minimap
+- Find & Replace with regex, Go to Line
+- Undo/Redo — full designer history with crash recovery
 - Session persistence (remembers open files and layout)
 - Built-in dark theme (Catppuccin Mocha); follows system GTK theme
-- Run scripts directly from the editor
-- **Live Canvas** — renders `.ui` XML in a side pane as you type (500ms debounce)
-- **Widget Palette** — 30 GTK4 widgets across 5 categories, click to insert XML
+
+**GTK4 UI Designer**
+- **Live Canvas** — renders `.ui` XML in a side pane as you type (500 ms debounce)
+- **Widget Palette** — 30+ GTK4 widgets across 5 categories, click to insert XML
 - **Property Inspector** — edit widget properties visually, writes back to XML in real-time
-- **Toolbox** — palette + inspector in one resizable panel
-- **Layout Modes** — Code View (Ctrl+1) and Designer View (Ctrl+2), persisted across sessions
-- **Code Generation** — emit idiomatic Rust handler stubs from `.ui` files
+- **GtkGrid Designer** — right-click to set column/row/span; merge-mode (select cells → apply span)
 - **Drag & Drop** — drag widgets on the canvas to reorder; drag from palette to insert
-- **GtkGrid Designer** — right-click to set column/row/span; grid placeholder cells; **merge-mode** (select cells → apply span)
-- **New Project Dialog** — with grid dimension input (rows × cols)
-- **Delete Widget** — remove the selected widget with the `Del` key
-- **Undo/Redo** — full designer history with crash recovery
-- **Claude Code Panel** — embedded AI assistant with live `.ui` + companion `.rs` context; apply code blocks directly to files
-- **API AI Chat Panel** — native multi-provider chat (OpenAI, Anthropic, Gemini, OpenAI-compat); no CLI required, configured via ⚙ gear button; direct API key auth; streams responses with Apply buttons
+- **Code Generation** — emit idiomatic Rust signal handler stubs from `.ui` files
+- **Template Library** — reusable UI snippets to jump-start new layouts
+- **New Project Dialog** — scaffold a project with grid dimension input (rows × cols)
 
-## What's Next
+**Build & Run**
+- Run scripts directly from the editor (F5) — Python, JavaScript, TypeScript, Rust, Shell, HTML/CSS
+- Build Rust projects (`cargo build --release`) with a `cargo check` pre-flight that catches errors before the full build
+- Build Install — builds a release binary and generates a `.desktop` launcher + icon for system installation
+- Stop button (Shift+F5) to kill a running process
 
-- Contributors welcome — see [ARCHITECTURE.md](ARCHITECTURE.md) for the module guide
+**AI Integration**
+- **Claude Code Panel** — embedded Claude Code assistant with live `.ui` + companion `.rs` context; apply code blocks directly to files
+- **API AI Chat Panel** — multi-provider chat (OpenAI, Anthropic, Gemini, OpenAI-compat); streams responses with Apply buttons; configured via ⚙ gear button
+
+**Layouts**
+- Code View (`Ctrl+1`) — full sidebar, editor with minimap, no canvas
+- Designer View (`Ctrl+2`) — canvas + toolbox front and centre, narrow sidebar
+- All panels toggleable independently (sidebar, output, canvas, toolbox, preview, minimap)
 
 ## Building
 
@@ -51,6 +60,12 @@ Without WebKit (disables AI chat panel and HTML preview):
 cargo build --release --no-default-features
 ```
 
+Or use the provided script which checks dependencies and installs the binary, icon, and desktop entry:
+
+```sh
+./build.sh
+```
+
 ## Configuration
 
 Config file: `~/.config/rui/rui.toml`
@@ -62,7 +77,10 @@ show_line_numbers = true
 tab_width = 4
 color_scheme = "rui-theme"
 show_minimap = true
+autosave = false
 ```
+
+Available colour schemes: `rui-theme`, `classic`, `oblivion`, `solarized-dark`, `solarized-light`, `kate`, `tango`, `cobalt`.
 
 ## License
 
