@@ -259,7 +259,6 @@ impl AiChatPanel {
         let input = TextView::new();
         input.set_wrap_mode(WrapMode::WordChar);
         input.set_height_request(60);
-        input.add_css_class("monospace");
         input.set_top_margin(4);
         input.set_bottom_margin(4);
         input.set_left_margin(6);
@@ -541,7 +540,7 @@ impl AiChatPanel {
         prompt.push_str(&text);
 
         self.add_message("user", &text);
-        let (response_label, anim_stop) = self.add_streaming_placeholder();
+        let (response_view, anim_stop) = self.add_streaming_placeholder();
 
         *self.busy.borrow_mut() = true;
         self.send_btn.set_visible(false);
@@ -580,24 +579,33 @@ impl AiChatPanel {
         });
 
         let panel = self.clone();
-        let accumulated = Rc::new(RefCell::new(String::new()));
+        let first_chunk = Rc::new(Cell::new(true));
         glib::idle_add_local(move || {
             while let Ok(event) = rx.try_recv() {
                 match event {
                     StreamEvent::Text(chunk) => {
-                        accumulated.borrow_mut().push_str(&chunk);
-                        response_label.set_text(&accumulated.borrow());
+                        let buf = response_view.buffer();
+                        if first_chunk.get() {
+                            first_chunk.set(false);
+                            anim_stop.set(true);
+                            response_view.remove_css_class("dim-label");
+                            buf.set_text(&chunk);
+                        } else {
+                            let mut end = buf.end_iter();
+                            buf.insert(&mut end, &chunk);
+                        }
                         panel.scroll_to_bottom();
                     }
                     StreamEvent::Error(msg) => {
-                        let cur = accumulated.borrow().clone();
-                        let err = if cur.is_empty() {
+                        let buf = response_view.buffer();
+                        let cur = buf.text(&buf.start_iter(), &buf.end_iter(), false);
+                        let err = if cur.is_empty() || first_chunk.get() {
                             format!("[Error: {}]", msg)
                         } else {
                             format!("{}\n\n[Error: {}]", cur, msg)
                         };
-                        response_label.set_text(&err);
-                        response_label.add_css_class("error");
+                        buf.set_text(&err);
+                        response_view.add_css_class("error");
                     }
                     StreamEvent::Done => {
                         anim_stop.set(true);
@@ -606,13 +614,14 @@ impl AiChatPanel {
                         panel.spinner.set_visible(false);
                         panel.send_btn.set_visible(true);
 
-                        let final_text = accumulated.borrow().clone();
-                        if !final_text.is_empty() {
+                        let buf = response_view.buffer();
+                        let final_text = buf.text(&buf.start_iter(), &buf.end_iter(), false).to_string();
+                        if !final_text.is_empty() && !first_chunk.get() {
                             panel.messages.borrow_mut().push(ChatMessage {
                                 role:    "assistant".into(),
                                 content: final_text.clone(),
                             });
-                            panel.add_apply_buttons_for(&final_text, &response_label);
+                            panel.add_apply_buttons_for(&final_text, &response_view);
                         }
                         panel.scroll_to_bottom();
                         return glib::ControlFlow::Break;
@@ -629,70 +638,125 @@ impl AiChatPanel {
         });
 
         let msg_box = GtkBox::new(Orientation::Vertical, 2);
-        msg_box.set_margin_top(4);
-        msg_box.set_margin_bottom(4);
+        msg_box.set_margin_top(6);
+        msg_box.set_margin_bottom(6);
+        msg_box.set_margin_start(4);
+        msg_box.set_margin_end(4);
+        if role == "user" {
+            msg_box.add_css_class("chat-user-msg");
+        }
 
+        // Header row: role label + copy button
+        let header_row = GtkBox::new(Orientation::Horizontal, 4);
         let role_lbl = Label::new(Some(if role == "user" { "You" } else { "AI" }));
         role_lbl.set_halign(gtk4::Align::Start);
+        role_lbl.set_hexpand(true);
         role_lbl.add_css_class("heading");
+        header_row.append(&role_lbl);
 
-        let text_lbl = Label::new(Some(content));
-        text_lbl.set_halign(gtk4::Align::Start);
-        text_lbl.set_wrap(true);
-        text_lbl.set_selectable(true);
-        text_lbl.set_max_width_chars(50);
+        let copy_btn = gtk4::Button::builder()
+            .icon_name("edit-copy-symbolic")
+            .has_frame(false)
+            .tooltip_text("Copy to clipboard")
+            .build();
+        copy_btn.add_css_class("flat");
+        let copy_text = content.to_string();
+        copy_btn.connect_clicked(move |_| {
+            if let Some(display) = gtk4::gdk::Display::default() {
+                display.clipboard().set_text(&copy_text);
+            }
+        });
+        header_row.append(&copy_btn);
 
-        msg_box.append(&role_lbl);
-        msg_box.append(&text_lbl);
+        // Body as non-editable TextView — appending doesn't trigger relayout
+        let text_view = TextView::new();
+        text_view.set_editable(false);
+        text_view.set_cursor_visible(false);
+        text_view.set_wrap_mode(WrapMode::WordChar);
+        text_view.set_hexpand(true);
+        text_view.set_left_margin(2);
+        text_view.set_right_margin(2);
+        text_view.set_top_margin(2);
+        text_view.add_css_class("chat-body");
+        text_view.buffer().set_text(content);
+
+        msg_box.append(&header_row);
+        msg_box.append(&text_view);
         self.chat_box.append(&msg_box);
         self.scroll_to_bottom();
     }
 
-    fn add_streaming_placeholder(&self) -> (Label, Rc<Cell<bool>>) {
+    fn add_streaming_placeholder(&self) -> (TextView, Rc<Cell<bool>>) {
         let msg_box = GtkBox::new(Orientation::Vertical, 2);
-        msg_box.set_margin_top(4);
-        msg_box.set_margin_bottom(4);
+        msg_box.set_margin_top(6);
+        msg_box.set_margin_bottom(6);
+        msg_box.set_margin_start(4);
+        msg_box.set_margin_end(4);
 
         let role_lbl = Label::new(Some("AI"));
         role_lbl.set_halign(gtk4::Align::Start);
         role_lbl.add_css_class("heading");
 
-        let text_lbl = Label::new(Some("thinking"));
-        text_lbl.set_halign(gtk4::Align::Start);
-        text_lbl.set_wrap(true);
-        text_lbl.set_selectable(true);
-        text_lbl.set_max_width_chars(50);
-        text_lbl.add_css_class("dim-label");
+        let text_view = TextView::new();
+        text_view.set_editable(false);
+        text_view.set_cursor_visible(false);
+        text_view.set_wrap_mode(WrapMode::WordChar);
+        text_view.set_hexpand(true);
+        text_view.set_left_margin(2);
+        text_view.set_right_margin(2);
+        text_view.set_top_margin(2);
+        text_view.add_css_class("chat-body");
+        text_view.add_css_class("dim-label");
+        text_view.buffer().set_text("thinking");
 
         msg_box.append(&role_lbl);
-        msg_box.append(&text_lbl);
+        msg_box.append(&text_view);
         self.chat_box.append(&msg_box);
         self.scroll_to_bottom();
 
-        // Animated ellipsis: "thinking" → "thinking." → "thinking.." → "thinking..."
+        // Animated ellipsis via buffer updates (no relayout)
         let anim_stop = Rc::new(Cell::new(false));
         let anim_stop_timer = anim_stop.clone();
-        let anim_lbl = text_lbl.clone();
+        let anim_buf = text_view.buffer();
         let dot_count = Rc::new(Cell::new(0u8));
         glib::timeout_add_local(Duration::from_millis(400), move || {
             if anim_stop_timer.get() {
                 return glib::ControlFlow::Break;
             }
             let n = dot_count.get();
-            anim_lbl.set_text(&format!("thinking{}", ".".repeat(n as usize)));
+            anim_buf.set_text(&format!("thinking{}", ".".repeat(n as usize)));
             dot_count.set((n + 1) % 4);
             glib::ControlFlow::Continue
         });
 
-        (text_lbl, anim_stop)
+        (text_view, anim_stop)
     }
 
-    fn add_apply_buttons_for(&self, text: &str, label: &Label) {
+    fn add_apply_buttons_for(&self, text: &str, view: &TextView) {
+        let Some(parent)  = view.parent() else { return };
+        let Some(msg_box) = parent.downcast_ref::<GtkBox>() else { return };
+
+        // Add copy button to header row (always, even if no code blocks)
+        if let Some(header) = msg_box.first_child() {
+            if let Some(header_row) = header.downcast_ref::<GtkBox>() {
+                let copy_btn = gtk4::Button::builder()
+                    .icon_name("edit-copy-symbolic")
+                    .has_frame(false)
+                    .tooltip_text("Copy response")
+                    .build();
+                copy_btn.add_css_class("flat");
+                let copy_text = text.to_string();
+                copy_btn.connect_clicked(move |_| {
+                    if let Some(display) = gtk4::gdk::Display::default() {
+                        display.clipboard().set_text(&copy_text);
+                    }
+                });
+                header_row.append(&copy_btn);
+            }
+        }
+
         let blocks = extract_code_blocks(text);
         if blocks.is_empty() { return; }
-
-        let Some(parent)  = label.parent() else { return };
-        let Some(msg_box) = parent.downcast_ref::<GtkBox>() else { return };
 
         for (i, block) in blocks.iter().enumerate() {
             let is_xml  = matches!(block.lang.as_str(), "xml" | "ui");

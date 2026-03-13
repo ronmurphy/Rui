@@ -229,5 +229,21 @@ button.toolbar-icon {
 .toolbar-popup label {
     color: @view_fg_color;
 }
+
+/* ── AI Chat panels ─────────────────────────────────────── */
+.chat-user-msg {
+    background-color: alpha(@theme_selected_bg_color, 0.08);
+    border-radius: 6px;
+    padding: 4px 6px;
+}
+.chat-body {
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    padding: 0;
+}
+.chat-body text {
+    background: transparent;
+}
 "#.to_string()
 }
