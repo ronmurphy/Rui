@@ -116,7 +116,7 @@ pub fn build(app: &Application) -> (Menu, Menu, Menu) {
     for name in &[
         "new-tab", "new-project", "new-ui", "open", "open-project", "save", "save-all", "save-as", "close-tab",
         "designer-undo", "designer-redo",
-        "cut", "copy", "paste", "select-all", "find", "find-replace", "search-in-files", "goto-line",
+        "cut", "copy", "paste", "select-all", "find", "find-replace", "search-in-files", "goto-line", "goto-definition",
         "toggle-sidebar", "toggle-output", "toggle-canvas", "toggle-toolbox", "toggle-preview", "toggle-minimap",
         "layout-code", "layout-designer",
         "run", "build", "build-install", "stop", "check", "clippy", "format-file", "open-browser", "generate-handlers", "template-library",

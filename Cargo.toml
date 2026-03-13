@@ -26,6 +26,9 @@ roxmltree     = "0.20"
 ureq          = { version = "2", features = ["native-tls"] }
 log           = "0.4"
 env_logger    = "0.11"
+tokio         = { version = "1", features = ["rt", "rt-multi-thread", "process", "io-util", "sync", "macros"] }
+lsp-types     = "0.94"
+url           = "2"
 
 # WebKit preview — optional, requires webkitgtk-6.0 system library
 webkit6 = { version = "0.4", optional = true }

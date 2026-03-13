@@ -60,8 +60,10 @@ struct AppState {
     history_applying: Rc<Cell<bool>>,
     /// Most-recently-used file/project list (persisted to mru.json).
     mru: crate::mru::Mru,
-    /// Last diagnostics from cargo check / clippy (for inline marks).
+    /// Last diagnostics from cargo check / clippy / LSP (for inline marks).
     last_diagnostics: Rc<RefCell<Vec<crate::diagnostics::Diagnostic>>>,
+    /// Live LSP connection to rust-analyzer (None if not a Rust project or RA missing).
+    lsp: Option<crate::lsp_client::LspClient>,
     /// Dynamic gio::Menu backing the File → Recent Files submenu.
     recent_files_menu: gtk4::gio::Menu,
     /// Dynamic gio::Menu backing the File → Recent Projects submenu.
@@ -709,6 +711,7 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         history_applying: Rc::new(Cell::new(false)),
         mru: crate::mru::Mru::load(),
         last_diagnostics: Rc::new(RefCell::new(Vec::new())),
+        lsp: None,
         recent_files_menu: recent_files_menu.clone(),
         recent_projects_menu: recent_projects_menu.clone(),
         main_paned: main_paned.clone(),
@@ -873,6 +876,41 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
             s.find_bar.set_view(&tab.view);
             s.minimap.set_view(&tab.view);
             s.toolbox.set_buffer(&tab.buffer());
+            // Notify LSP of the newly-focused document; wire debounced change notifications
+            if let Some(ref lsp) = s.lsp {
+                if let Some(path) = tab.path() {
+                    if path.extension().map(|e| e == "rs").unwrap_or(false) {
+                        let buf = tab.buffer();
+                        let (start, end) = buf.bounds();
+                        let text = buf.text(&start, &end, false).to_string();
+                        lsp.notify_open(&path, &text);
+
+                        // Debounced notify_change: 400 ms after last keystroke
+                        let lsp2 = lsp.clone();
+                        let path2 = path.clone();
+                        let gen_rc = Rc::new(Cell::new(0u64));
+                        let gen2 = gen_rc.clone();
+                        buf.connect_changed(move |buf| {
+                            if !lsp2.initialized.get() { return; }
+                            let gen = gen2.get().wrapping_add(1);
+                            gen2.set(gen);
+                            let lsp3 = lsp2.clone();
+                            let path3 = path2.clone();
+                            let gen3 = gen2.clone();
+                            let (s2, e2) = buf.bounds();
+                            let text = buf.text(&s2, &e2, false).to_string();
+                            gtk4::glib::timeout_add_local_once(
+                                std::time::Duration::from_millis(400),
+                                move || {
+                                    if gen3.get() == gen {
+                                        lsp3.notify_change(&path3, &text);
+                                    }
+                                },
+                            );
+                        });
+                    }
+                }
+            }
 
             // Connect canvas, toolbox, and outline if this is a .ui file
             if let Some(path) = tab.path() {
@@ -1102,6 +1140,7 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
                             }
 
                             st3.borrow_mut().project_dir = Some(dir.clone());
+                            start_lsp(&st3, &dir);
 
                             let s = st3.borrow();
                             s.notebook.close_all();
@@ -1211,6 +1250,7 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
                     if let Some(dir) = folder.path() {
                         // Remember project directory for Run/Build
                         st2.borrow_mut().project_dir = Some(dir.clone());
+                        start_lsp(&st2, &dir);
 
                         {
                             let s = st2.borrow();
@@ -1355,6 +1395,7 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
                 if !dir.is_dir() { return; }
 
                 st.borrow_mut().project_dir = Some(dir.clone());
+                start_lsp(&st, &dir);
                 {
                     let s = st.borrow();
                     s.sidebar.set_root(&dir);
@@ -1506,7 +1547,18 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
     {
         let st = state.clone();
         menubar::connect_action(app, "close-tab", move || {
-            st.borrow().notebook.close_current();
+            let s = st.borrow();
+            // Notify LSP that the document is being closed
+            if let Some(ref lsp) = s.lsp {
+                if let Some(tab) = s.notebook.current_tab() {
+                    if let Some(path) = tab.path() {
+                        if path.extension().map(|e| e == "rs").unwrap_or(false) {
+                            lsp.notify_close(&path);
+                        }
+                    }
+                }
+            }
+            s.notebook.close_current();
         });
     }
 
@@ -1615,6 +1667,36 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         let st = state.clone();
         menubar::connect_action(app, "find-replace", move || {
             st.borrow().find_bar.reveal_replace();
+        });
+    }
+
+    // F12 → Go to Definition
+    {
+        let st = state.clone();
+        menubar::connect_action(app, "goto-definition", move || {
+            let s = st.borrow();
+            let Some(ref lsp) = s.lsp else { return };
+            let Some(tab) = s.notebook.current_tab() else { return };
+            let Some(path) = tab.path() else { return };
+            let buf = tab.buffer();
+            let cursor = buf.iter_at_mark(&buf.get_insert());
+            let line = cursor.line() as u32;
+            let col  = cursor.line_offset() as u32;
+            let notebook = s.notebook.clone();
+            let cfg      = s.cfg.clone();
+            lsp.request_definition(&path, line, col, move |result| {
+                let Some((def_path, def_line, def_col)) = result else { return };
+                notebook.open_file(&def_path, &cfg);
+                // Jump to the definition line
+                if let Some(tab) = notebook.current_tab() {
+                    let buf = tab.buffer();
+                    if let Some(mut iter) = buf.iter_at_line(def_line as i32) {
+                        iter.set_line_offset(def_col as i32);
+                        buf.place_cursor(&iter);
+                        tab.view.scroll_to_iter(&mut iter.clone(), 0.1, true, 0.5, 0.3);
+                    }
+                }
+            });
         });
     }
 
@@ -2553,8 +2635,9 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
     app.set_accels_for_action("app.ai-open",        &["<Ctrl><Alt>A"]);
     app.set_accels_for_action("app.ai-copy-file",  &["<Ctrl><Alt>C"]);
     app.set_accels_for_action("app.ai-apply-diff", &["<Ctrl><Alt>D"]);
-    app.set_accels_for_action("app.help",          &["F1"]);
-    app.set_accels_for_action("app.run",           &["F5"]);
+    app.set_accels_for_action("app.help",           &["F1"]);
+    app.set_accels_for_action("app.goto-definition",&["F12"]);
+    app.set_accels_for_action("app.run",            &["F5"]);
     app.set_accels_for_action("app.build",         &["<Ctrl><Shift>B"]);
     app.set_accels_for_action("app.stop",          &["<Shift>F5"]);
 
@@ -2813,6 +2896,25 @@ fn format_for_ai_simple(filename: &str, lang: &str, code: &str) -> String {
         "File: `{filename}`\n\n```{lang}\n{code}\n```\n\n\
          Please respond **only** with a unified git diff so I can apply it with `git apply`.",
     )
+}
+
+/// Start (or restart) the LSP client for `dir` and store it in state.
+/// Safe to call multiple times — shuts down the old client first.
+fn start_lsp(
+    state: &Rc<RefCell<AppState>>,
+    dir: &std::path::Path,
+) {
+    // Shutdown previous client if any
+    if let Some(ref lsp) = state.borrow().lsp {
+        lsp.shutdown();
+    }
+    let last_diags = state.borrow().last_diagnostics.clone();
+    let notebook   = state.borrow().notebook.clone();
+    let client = crate::lsp_client::LspClient::start(dir, notebook, last_diags);
+    state.borrow_mut().lsp = client;
+    if state.borrow().lsp.is_some() {
+        log::info!("LSP: started rust-analyzer for {}", dir.display());
+    }
 }
 
 fn find_cargo_toml_dir(path: &std::path::Path) -> Option<PathBuf> {
