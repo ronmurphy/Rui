@@ -189,18 +189,18 @@ File: `{filename}`\n\
 {code}\n\
 ```\n\
 \n\
-Please respond **only** with a unified git diff in this format:\n\
+Please respond **only** with a strreplace block in this format:\n\
 \n\
-```diff\n\
---- a/{filename}\n\
-+++ b/{filename}\n\
-@@ -line,count +line,count @@\n\
- context line\n\
--removed line\n\
-+added line\n\
+```strreplace\n\
+FILE: {filename}\n\
+FIND:\n\
+<exact lines to find>\n\
+REPLACE:\n\
+<new lines to put in their place>\n\
 ```\n\
 \n\
-Do not include any explanation outside the diff block.",
+Use multiple FILE/FIND/REPLACE sections separated by --- for multiple changes.\n\
+Do not include any explanation outside the strreplace block.",
         question_block = question_block,
         filename = filename,
         lang = lang,

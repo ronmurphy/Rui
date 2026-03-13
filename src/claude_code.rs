@@ -103,6 +103,7 @@ pub struct ClaudeCodePanel {
     stop_btn:      Button,
     ctx_lbl:       Label,
     warn_lbl:      Label,
+    compact_btn:   Button,
     file_switch:   Switch,
     /// True after files have been sent once; reset on clear or switch toggle-off.
     files_sent:    Rc<Cell<bool>>,
@@ -203,7 +204,18 @@ impl ClaudeCodePanel {
         ));
         warn_lbl.add_css_class("chat-warn");
         warn_lbl.set_wrap(true);
+        warn_lbl.set_hexpand(true);
+        warn_lbl.set_halign(gtk4::Align::Start);
         warn_lbl.set_visible(false);
+
+        let compact_btn = Button::with_label("Compact");
+        compact_btn.set_tooltip_text(Some("Keep last 6 messages, drop earlier ones"));
+        compact_btn.add_css_class("flat");
+        compact_btn.set_visible(false);
+
+        let warn_row = GtkBox::new(Orientation::Horizontal, 6);
+        warn_row.append(&warn_lbl);
+        warn_row.append(&compact_btn);
 
         // File context toggle row
         let files_row = GtkBox::new(Orientation::Horizontal, 6);
@@ -218,7 +230,7 @@ impl ClaudeCodePanel {
         files_row.append(&file_switch);
         files_row.append(&files_lbl);
 
-        input_box.append(&warn_lbl);
+        input_box.append(&warn_row);
         input_box.append(&files_row);
         input_box.append(&input_scroll);
         input_box.append(&btn_row);
@@ -269,6 +281,7 @@ impl ClaudeCodePanel {
             stop_btn: stop_btn.clone(),
             ctx_lbl: ctx_lbl.clone(),
             warn_lbl: warn_lbl.clone(),
+            compact_btn: compact_btn.clone(),
             file_switch: file_switch.clone(),
             files_sent: Rc::new(Cell::new(false)),
             history:    Rc::new(RefCell::new(None)),
@@ -300,6 +313,12 @@ impl ClaudeCodePanel {
         {
             let p = panel.clone();
             clear_btn.connect_clicked(move |_| p.clear_chat());
+        }
+
+        // Wire Compact button.
+        {
+            let p = panel.clone();
+            compact_btn.connect_clicked(move |_| p.compact_chat());
         }
 
         // Wire Stop button.
@@ -400,6 +419,31 @@ impl ClaudeCodePanel {
         self.files_sent.set(false);
         self.ctx_lbl.set_text("Includes .ui + companion .rs context");
         self.warn_lbl.set_visible(false);
+        self.compact_btn.set_visible(false);
+    }
+
+    fn compact_chat(&self) {
+        let kept: Vec<ChatMessage> = {
+            let msgs = self.messages.borrow();
+            let skip = msgs.len().saturating_sub(6);
+            msgs[skip..].to_vec()
+        };
+        // Clear UI
+        while let Some(child) = self.chat_box.first_child() {
+            self.chat_box.remove(&child);
+        }
+        // Add compact notice
+        let notice = Label::new(Some("── Earlier messages compacted ──"));
+        notice.add_css_class("dim-label");
+        notice.set_margin_top(8);
+        notice.set_margin_bottom(8);
+        self.chat_box.append(&notice);
+        // Restore data + re-render
+        self.messages.borrow_mut().clear();
+        for msg in &kept {
+            self.add_message(&msg.role, &msg.content);
+        }
+        self.files_sent.set(false);
     }
 
     fn update_ctx_lbl(&self) {
@@ -416,7 +460,9 @@ impl ClaudeCodePanel {
                 self.ctx_lbl.set_text(&format!("{} msgs · {} chars", count, chars));
             }
         }
-        self.warn_lbl.set_visible(count >= 10);
+        let warn = count >= 10;
+        self.warn_lbl.set_visible(warn);
+        self.compact_btn.set_visible(warn);
     }
 
     fn do_send(&self) {

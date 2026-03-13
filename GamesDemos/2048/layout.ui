@@ -1,0 +1,435 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.0"/>
+  
+  <!-- CSS is loaded programmatically in layout_app.rs -->
+  <!--
+    <object class="GtkCssProvider" id="css_provider">
+    <property name="text">
+      &lt;style type=&quot;internal&quot;&gt;
+        /* Base button style */
+        .tile {
+          background-color: rgba(255,255,255,0.2) !important;
+          border-radius: 6px !important;
+          min-width: 80px !important;
+          min-height: 80px !important;
+          font-size: 32sp !important;
+          font-weight: bold !important;
+          text-align: center !important;
+          justify-content: center !important;
+          transition: all 0.15s ease-in-out !important;
+        }
+
+        .tile:empty {
+          border-radius: 6px !important;
+          min-width: 80px !important;
+          min-height: 80px !important;
+          font-size: 24sp !important;
+          font-weight: bold !important;
+          text-align: center !important;
+        }
+
+        /* Tile background colors by value */
+        .tile[data-val-2]    { background-color: rgba(255, 250, 217, 0.8); }
+        .tile[data-val-4]    { background-color: rgba(237, 240, 200, 0.9); }
+        .tile[data-val-8]    { background-color: #f65e3b; color: white !important; }
+        .tile[data-val-16]   { background-color: #edcf72; color: white !important; }
+        .tile[data-val-32]   { background-color: #eec14d; color: black !important; }
+        .tile[data-val-64]   { background-color: #ee9a2b; color: white !important; }
+        .tile[data-val-128]  { background-color: #fbc531; color: black !important; box-shadow: 0 0 20px rgba(251,197,49,0.6) !important; }
+        .tile[data-val-256]  { background-color: #f8b40c; color: black !important; box-shadow: 0 0 30px rgba(248,180,12,0.8) !important; }
+        .tile[data-val-512]  { background-color: #f79c1f; color: white !important; box-shadow: 0 0 35px rgba(247,156,31,0.9) !important; }
+        .tile[data-val-1024] { background-color: #f58533; color: white !important; box-shadow: 0 0 45px rgba(245,133,51,1) !important; font-size: 28sp !important; }
+        .tile[data-val-2048] { background-color: #f67c16; color: white !important; box-shadow: 0 0 55px rgba(246,124,22,1) !important; font-size: 28sp !important; }
+        .tile[data-val-4096] { background-color: #ed7d31; color: white !important; box-shadow: 0 0 65px rgba(237,125,49,1) !important; font-size: 28sp !important; }
+        .tile[data-val-8192] { background-color: #eecf3d; color: black !important; box-shadow: 0 0 75px rgba(238,207,61,1) !important; font-size: 28sp !important; }
+        .tile[data-val-16384]{ background-color: #e9d93a; color: black !important; box-shadow: 0 0 85px rgba(233,217,58,1) !important; font-size: 24sp !important; }
+        
+        /* Animated tile spawn */
+        @keyframes spawn-pulse {
+          0% { transform: scale(0); opacity: 0; }
+          40% { transform: scale(1.3); }
+          70% { transform: scale(0.95); }
+          100% { transform: scale(1); opacity: 1; }
+        }
+
+        /* Animated tile merge */
+        @keyframes merge-pop {
+          0% { transform: scale(1); }
+          40% { transform: scale(1.6); }
+          70% { transform: scale(1.2); }
+          100% { transform: scale(1); }
+        }
+
+        /* Tile movement */
+        @keyframes move-slide {
+          0% { margin-left: 0; }
+          40% { margin-left: -3px; }
+          60% { margin-left: -6px; }
+          100% { margin-left: 0; }
+        }
+
+        /* Tile animation classes */
+        .tile.spawning {
+          animation: spawn-pulse 0.4s ease-out !important;
+        }
+
+        .tile.merging {
+          animation: merge-pop 0.3s ease-in-out !important;
+        }
+
+        /* Header section */
+        header {
+          background: linear-gradient(135deg, #faf8ef 0%, #eeebdb 50%, #e6e2d9 100%);
+          border-radius: 16px !important;
+          padding: 24px !important;
+        }
+
+        header-title {
+          font-size: 48sp !important;
+          font-weight: bold !important;
+          color: #776e65 !important;
+          margin-bottom: 12px !important;
+        }
+
+        header-subtitle {
+          font-size: 14sp !important;
+          color: #998d86 !important;
+          line-height: 1.3 !important;
+        }
+
+        /* Score boxes */
+        .score-box {
+          background-color: #bbada0 !important;
+          border-radius: 8px !important;
+          padding: 12px 16px !important;
+          min-width: 70px !important;
+          text-align: center !important;
+          color: white !important;
+        }
+
+        .score-label {
+          font-size: 8sp !important;
+          text-transform: uppercase !important;
+          color: #f9f6f2 !important;
+          margin-bottom: 4px !important;
+        }
+
+        .score-value {
+          font-size: 32sp !important;
+          font-weight: bold !important;
+          color: white !important;
+        }
+
+        /* Game grid */
+        #grid {
+          background-color: #bbada0 !important;
+          border-radius: 16px !important;
+          padding: 8px !important;
+        }
+
+        .game-cell {
+          background-color: rgba(238,228,218,0.35) !important;
+          border-radius: 6px !important;
+          min-width: 80px !important;
+          min-height: 80px !important;
+          font-size: 24sp !important;
+        }
+
+        /* Controls section */
+        .controls-box {
+          background-color: #bbada0 !important;
+          border-radius: 16px !important;
+          padding: 16px !important;
+        }
+
+        /* New game button */
+        #new-game-btn {
+          min-width: 200px !important;
+          height: 48px !important;
+          background-color: #8f7a66 !important;
+          color: white !important;
+          font-size: 16sp !important;
+          font-weight: bold !important;
+          border-radius: 12px !important;
+          border: none !important;
+          box-shadow: 0 4px 8px rgba(143,122,102,0.4) !important;
+          transition: all 0.2s ease-in-out !important;
+        }
+
+        #new-game-btn:hover {
+          background-color: #9f8b76 !important;
+          transform: translateY(-2px) !important;
+          box-shadow: 0 6px 12px rgba(143,122,102,0.5) !important;
+        }
+
+        #new-game-btn:active {
+          transform: translateY(0) !important;
+          box-shadow: 0 2px 4px rgba(143,122,102,0.4) !important;
+        }
+
+        /* Game over modal */
+        #game-over-overlay {
+          background-color: rgba(0,0,0,0.85) !important;
+        }
+
+        .modal-content {
+          background-color: #bbada0 !important;
+          border-radius: 16px !important;
+          padding: 24px !important;
+          text-align: center !important;
+          color: white !important;
+        }
+
+        .modal-title {
+          font-size: 36sp !important;
+          font-weight: bold !important;
+          margin-bottom: 12px !important;
+        }
+
+        .modal-message {
+          font-size: 14sp !important;
+          line-height: 1.5 !important;
+          margin-bottom: 20px !important;
+        }
+
+        /* Footer */
+        footer-info {
+          background-color: rgba(255,255,255,0.1) !important;
+          border-radius: 16px !important;
+          padding: 12px !important;
+          color: #776e65 !important;
+          font-size: 9sp !important;
+        }
+
+        /* Animations */
+        .animate-tile {
+          transition: all 0.2s ease-in-out !important;
+        }
+        
+      &lt;/style&gt;
+    </property>
+  </object>
+  -->
+
+  <!-- Main container -->
+  <object class="GtkBox" id="main_box">
+    <property name="orientation">vertical</property>
+    <property name="spacing">12</property>
+    
+    <!-- Header section -->
+    <child>
+      <object class="GtkBox" id="header_section">
+        <property name="orientation">horizontal</property>
+        <property name="spacing">16</property>
+        
+        <!-- Title column -->
+        <child>
+          <object class="GtkGrid" id="title_grid">
+            <property name="row-spacing">4</property>
+            <property name="column-spacing">8</property>
+            <child>
+              <object class="GtkLabel" id="game_title">
+                <property name="label">2048</property>
+                <style-name>header-title</style-name>
+                <property name="halign">start</property>
+                <property name="ellipsize">end</property>
+              </object>
+            </child>
+            <child><layout column="1" row="0"></layout></child>
+          </object>
+        </child>
+        
+        <!-- Score columns -->
+        <child><layout column="1" row="0"></layout></child>
+        <child>
+          <object class="GtkBox" id="score_column">
+            <property name="orientation">horizontal</property>
+            <property name="spacing">8</property>
+            <child>
+              <object class="GtkBox" id="score_container_0">
+                <property name="orientation">vertical</property>
+                <style-name>score-box</style-name>
+                <child>
+                  <object class="GtkLabel" id="score_label_0">
+                    <property name="label">Score</property>
+                    <style-name>score-label</style-name>
+                    <property name="halign">center</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="current_score">
+                    <property name="label">0</property>
+                    <style-name>score-value</style-name>
+                    <property name="halign">center</property>
+                  </object>
+                </child>
+              </object>
+            </child>
+            <child><layout column="1" row="0"></layout></child>
+            <child>
+              <object class="GtkBox" id="score_container_1">
+                <property name="orientation">vertical</property>
+                <style-name>score-box</style-name>
+                <child>
+                  <object class="GtkLabel" id="high_score_label">
+                    <property name="label">Best</property>
+                    <style-name>score-label</style-name>
+                    <property name="halign">center</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="best_score">
+                    <property name="label">0</property>
+                    <style-name>score-value</style-name>
+                    <property name="halign">center</property>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+    
+    <!-- Main grid game area -->
+    <child><layout column="0" row="1"></layout></child>
+    <child>
+      <object class="GtkFrame" id="grid_container">
+        <property name="margin-start">4</property>
+        <property name="margin-end">4</property>
+        <property name="margin-top">0</property>
+        <property name="margin-bottom">0</property>
+        <child>
+          <object class="GtkGrid" id="grid">
+            <!-- 4x4 game grid (16 cells total) -->
+            <!-- Row 0 -->
+            <child><layout column="0" row="0"></layout></child>
+            <child><layout column="1" row="0"></layout></child>
+            <child><layout column="2" row="0"></layout></child>
+            <child><layout column="3" row="0"></layout></child>
+            <!-- Row 1 -->
+            <child><layout column="0" row="1"></layout></child>
+            <child><layout column="1" row="1"></layout></child>
+            <child><layout column="2" row="1"></layout></child>
+            <child><layout column="3" row="1"></layout></child>
+            <!-- Row 2 -->
+            <child><layout column="0" row="2"></layout></child>
+            <child><layout column="1" row="2"></layout></child>
+            <child><layout column="2" row="2"></layout></child>
+            <child><layout column="3" row="2"></layout></child>
+            <!-- Row 3 -->
+            <child><layout column="0" row="3"></layout></child>
+            <child><layout column="1" row="3"></layout></child>
+            <child><layout column="2" row="3"></layout></child>
+            <child><layout column="3" row="3"></layout></child>
+          </object>
+        </child>
+      </object>
+    </child>
+    
+    <!-- Footer with controls -->
+    <child><layout column="0" row="4"></layout></child>
+    <child>
+      <object class="GtkBox" id="footer_box">
+        <property name="orientation">horizontal</property>
+        <property name="spacing">12</property>
+        
+        <!-- New Game button -->
+        <child>
+          <object class="GtkButton" id="new_game_btn">
+            <property name="label">New Game</property>
+            <style-name>new-game-btn</style-name>
+            <property name="halign">start</property>
+          </object>
+        </child>
+        
+        <!-- Moves counter -->
+        <child><layout column="1" row="0"></layout></child>
+        <child>
+          <object class="GtkBox" id="moves_container">
+            <property name="orientation">vertical</property>
+            <style-name>score-box</style-name>
+            <child>
+              <object class="GtkLabel" id="moves_label">
+                <property name="label">Moves</property>
+                <style-name>score-label</style-name>
+                <property name="halign">center</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkLabel" id="moves_count">
+                <property name="label">0</property>
+                <style-name>score-value</style-name>
+                <property name="halign">center</property>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+    
+    <!-- Footer info -->
+    <child><layout column="0" row="5"></layout></child>
+    <child>
+      <object class="GtkFrame" id="info_container">
+        <property name="margin-top">8</property>
+        <property name="margin-bottom">8</property>
+        <child>
+          <object class="GtkBox" id="footer_info">
+            <property name="orientation">horizontal</property>
+            <style-name>footer-info</style-name>
+            <child>
+              <object class="GtkLabel" id="instructions_label">
+                <property name="label">Use arrow keys or WASD to move tiles. Combine matching numbers!▲◀▼▶ W A S D</property>
+                <property name="ellipsize">end</property>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+    
+    <!-- Game over overlay (hidden by default) -->
+    <child><layout column="0" row="6"></layout></child>
+    <child>
+      <object class="GtkOverlay" id="game_over_overlay">
+        <property name="visible">false</property>
+        <child>
+          <object class="GtkBox" id="overlay_content">
+            <property name="orientation">vertical</property>
+            <property name="spacing">24</property>
+            <style-name>modal-content</style-name>
+            <property name="margin-start">12</property>
+            <property name="margin-end">12</property>
+            <property name="margin-top">8</property>
+            <property name="margin-bottom">8</property>
+            <child>
+              <object class="GtkLabel" id="game_over_title">
+                <property name="label">Game Over!</property>
+                <style-name>modal-title</style-name>
+              </object>
+            </child>
+            <child>
+              <object class="GtkLabel" id="final_score_label">
+                <property name="label">Your score: 0 | Best score: 0</property>
+                <style-name>modal-message</style-name>
+              </object>
+            </child>
+            <child>
+              <object class="GtkButton" id="restart_from_overlay_btn">
+                <property name="label">Try Again</property>
+                <property name="halign">center</property>
+                <property name="margin-start">12</property>
+                <property name="margin-end">12</property>
+                <property name="margin-top">16</property>
+                <property name="margin-bottom">16</property>
+                <style-name>new-game-btn</style-name>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+  </object>
+</interface>
