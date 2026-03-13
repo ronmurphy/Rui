@@ -676,6 +676,40 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
     main_paned.set_shrink_end_child(false);
     main_paned.set_position(230);
 
+    // Link panel widths: dragging either the left or right panel syncs the other.
+    {
+        use std::rc::Rc;
+        use std::cell::Cell;
+        let syncing = Rc::new(Cell::new(false));
+
+        // right_paned drag → update left_nb width
+        let mp = main_paned.clone();
+        let syncing2 = syncing.clone();
+        right_paned.connect_notify_local(Some("position"), move |rp, _| {
+            if syncing2.get() { return; }
+            let ai_width = rp.allocated_width() - rp.position();
+            if ai_width > 150 && ai_width < 900 {
+                syncing2.set(true);
+                mp.set_position(ai_width);
+                syncing2.set(false);
+            }
+        });
+
+        let rp2 = right_paned.clone();
+        let syncing3 = syncing.clone();
+        main_paned.connect_notify_local(Some("position"), move |mp, _| {
+            if syncing3.get() { return; }
+            let left_w = mp.position();
+            let total  = rp2.allocated_width();
+            let new_pos = total - left_w;
+            if left_w > 150 && left_w < 900 && new_pos > 200 {
+                syncing3.set(true);
+                rp2.set_position(new_pos);
+                syncing3.set(false);
+            }
+        });
+    }
+
     let vert_paned = Paned::new(Orientation::Vertical);
     vert_paned.set_start_child(Some(&main_paned));
     vert_paned.set_end_child(Some(&output.widget));

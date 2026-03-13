@@ -12,7 +12,7 @@
 use gtk4::prelude::*;
 use gtk4::{
     Box as GtkBox, Button, DropDown, Entry, Label, Orientation,
-    Popover, ScrolledWindow, Separator, Spinner, StringList, TextView, WrapMode,
+    Popover, ScrolledWindow, Separator, Spinner, StringList, Switch, TextView, WrapMode,
     InputHints, InputPurpose,
 };
 use gtk4::glib;
@@ -74,7 +74,8 @@ When you respond:
   +new line
   ```
 - The user can apply each block independently to the correct file
-- Keep responses concise and code-focused."#;
+- Keep responses concise and code-focused.
+- Before returning any code, silently review it for syntax errors, missing imports, wrong method names, and type mismatches. Fix all issues before responding — do not return broken code."#;
 
 
 // ── Chat message record ───────────────────────────────────────────────────────
@@ -90,6 +91,183 @@ struct ChatMessage {
 struct CodeBlock {
     lang: String,
     code: String,
+}
+
+// ── Message rendering ────────────────────────────────────────────────────────
+
+enum MsgSegment {
+    Text(String),
+    Code { lang: String, code: String },
+}
+
+fn parse_message_segments(text: &str) -> Vec<MsgSegment> {
+    let mut segments = Vec::new();
+    let mut current = String::new();
+    let mut lines = text.lines().peekable();
+
+    while let Some(line) = lines.next() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("```") {
+            if !current.trim().is_empty() {
+                segments.push(MsgSegment::Text(current.trim_end().to_string()));
+                current = String::new();
+            }
+            let lang = trimmed[3..].trim().to_string();
+            let mut code = String::new();
+            for inner in lines.by_ref() {
+                if inner.trim() == "```" { break; }
+                if !code.is_empty() { code.push('\n'); }
+                code.push_str(inner);
+            }
+            if !code.is_empty() {
+                segments.push(MsgSegment::Code { lang, code });
+            }
+        } else {
+            if !current.is_empty() { current.push('\n'); }
+            current.push_str(line);
+        }
+    }
+    if !current.trim().is_empty() {
+        segments.push(MsgSegment::Text(current.trim_end().to_string()));
+    }
+    segments
+}
+
+fn render_response(msg_box: &gtk4::Box, streaming_view: &TextView, text: &str) {
+    let segments = parse_message_segments(text);
+
+    if segments.len() == 1 {
+        if let MsgSegment::Text(ref t) = segments[0] {
+            apply_markup_to_view(streaming_view, t);
+            return;
+        }
+    }
+
+    msg_box.remove(streaming_view);
+
+    for segment in &segments {
+        match segment {
+            MsgSegment::Text(t) => {
+                if t.trim().is_empty() { continue; }
+                let tv = TextView::new();
+                tv.set_editable(false);
+                tv.set_cursor_visible(false);
+                tv.set_wrap_mode(WrapMode::WordChar);
+                tv.set_hexpand(true);
+                tv.set_left_margin(2);
+                tv.set_right_margin(2);
+                tv.set_top_margin(2);
+                tv.add_css_class("chat-body");
+                apply_markup_to_view(&tv, t);
+                msg_box.append(&tv);
+            }
+            MsgSegment::Code { lang, code } => {
+                let code_box = gtk4::Box::new(Orientation::Vertical, 0);
+                code_box.add_css_class("chat-code-block");
+                code_box.set_margin_top(4);
+                code_box.set_margin_bottom(4);
+                code_box.set_hexpand(true);
+
+                if !lang.is_empty() {
+                    let lang_lbl = Label::new(Some(lang));
+                    lang_lbl.set_halign(gtk4::Align::Start);
+                    lang_lbl.add_css_class("chat-code-lang");
+                    code_box.append(&lang_lbl);
+                }
+
+                let tv = TextView::new();
+                tv.set_editable(false);
+                tv.set_cursor_visible(false);
+                tv.set_monospace(true);
+                tv.set_wrap_mode(WrapMode::None);
+                tv.set_hexpand(true);
+                tv.set_left_margin(8);
+                tv.set_right_margin(8);
+                tv.set_top_margin(6);
+                tv.set_bottom_margin(6);
+                tv.add_css_class("chat-code-view");
+                tv.buffer().set_text(code);
+
+                let sw = ScrolledWindow::builder()
+                    .hexpand(true)
+                    .vscrollbar_policy(gtk4::PolicyType::Never)
+                    .hscrollbar_policy(gtk4::PolicyType::Automatic)
+                    .child(&tv)
+                    .build();
+                code_box.append(&sw);
+                msg_box.append(&code_box);
+            }
+        }
+    }
+}
+
+fn strip_inline_markdown(text: &str) -> (String, Vec<(i32, i32, &'static str)>) {
+    let mut out = String::new();
+    let mut spans: Vec<(i32, i32, &'static str)> = Vec::new();
+    let chars: Vec<char> = text.chars().collect();
+    let n = chars.len();
+    let mut i = 0;
+    let mut out_len: i32 = 0;
+    while i < n {
+        if i + 1 < n && chars[i] == '*' && chars[i + 1] == '*' {
+            let inner = i + 2;
+            let mut close = None;
+            let mut j = inner;
+            while j + 1 < n {
+                if chars[j] == '*' && chars[j + 1] == '*' { close = Some(j); break; }
+                j += 1;
+            }
+            if let Some(c) = close {
+                let start = out_len;
+                for k in inner..c { out.push(chars[k]); out_len += 1; }
+                if out_len > start { spans.push((start, out_len, "b")); }
+                i = c + 2;
+                continue;
+            }
+        }
+        if chars[i] == '*' && (i + 1 >= n || chars[i + 1] != '*') {
+            let inner = i + 1;
+            let mut close = None;
+            let mut j = inner;
+            while j < n {
+                if chars[j] == '*' && (j + 1 >= n || chars[j + 1] != '*') { close = Some(j); break; }
+                j += 1;
+            }
+            if let Some(c) = close {
+                let start = out_len;
+                for k in inner..c { out.push(chars[k]); out_len += 1; }
+                if out_len > start { spans.push((start, out_len, "i")); }
+                i = c + 1;
+                continue;
+            }
+        }
+        out.push(chars[i]);
+        out_len += 1;
+        i += 1;
+    }
+    (out, spans)
+}
+
+fn apply_markup_to_view(view: &TextView, text: &str) {
+    let buf = view.buffer();
+    let table = buf.tag_table();
+    if table.lookup("b").is_none() {
+        if let Some(t) = buf.create_tag(Some("b"), &[]) {
+            t.set_weight(700);
+        }
+    }
+    if table.lookup("i").is_none() {
+        if let Some(t) = buf.create_tag(Some("i"), &[]) {
+            t.set_style(gtk4::pango::Style::Italic);
+        }
+    }
+    let (plain, spans) = strip_inline_markdown(text);
+    buf.set_text(&plain);
+    for (s, e, name) in &spans {
+        if let Some(tag) = table.lookup(name) {
+            buf.apply_tag(&tag, &buf.iter_at_offset(*s), &buf.iter_at_offset(*e));
+        }
+    }
 }
 
 fn extract_code_blocks(text: &str) -> Vec<CodeBlock> {
@@ -198,6 +376,10 @@ pub struct AiChatPanel {
     busy:       Rc<RefCell<bool>>,
     spinner:    Spinner,
     child_proc: Arc<Mutex<Option<u32>>>,  // unused, kept for API parity
+    stop_btn:   Button,
+    ctx_lbl:    Label,
+    warn_lbl:   Label,
+    file_switch: Switch,
 }
 
 impl AiChatPanel {
@@ -277,6 +459,11 @@ impl AiChatPanel {
         ctx_lbl.set_halign(gtk4::Align::Start);
         ctx_lbl.set_hexpand(true);
 
+        let stop_btn = Button::with_label("Stop");
+        stop_btn.add_css_class("destructive-action");
+        stop_btn.set_tooltip_text(Some("Stop generation"));
+        stop_btn.set_visible(false);
+
         let send_btn = Button::with_label("Send");
         send_btn.add_css_class("suggested-action");
         send_btn.set_tooltip_text(Some("Send (Ctrl+Enter)"));
@@ -286,7 +473,31 @@ impl AiChatPanel {
 
         btn_row.append(&ctx_lbl);
         btn_row.append(&spinner);
+        btn_row.append(&stop_btn);
         btn_row.append(&send_btn);
+
+        let warn_lbl = Label::new(Some(
+            "Long conversation — context may be truncated. Consider clearing.",
+        ));
+        warn_lbl.add_css_class("chat-warn");
+        warn_lbl.set_wrap(true);
+        warn_lbl.set_visible(false);
+
+        // File context toggle row
+        let files_row = GtkBox::new(Orientation::Horizontal, 6);
+        files_row.set_margin_start(2);
+        let file_switch = Switch::new();
+        file_switch.set_active(true);
+        file_switch.set_tooltip_text(Some("Include .ui + .rs file contents as context"));
+        file_switch.set_valign(gtk4::Align::Center);
+        let files_lbl = Label::new(Some("Send file context"));
+        files_lbl.add_css_class("dim-label");
+        files_lbl.set_halign(gtk4::Align::Start);
+        files_row.append(&file_switch);
+        files_row.append(&files_lbl);
+
+        input_box.append(&warn_lbl);
+        input_box.append(&files_row);
         input_box.append(&input_scroll);
         input_box.append(&btn_row);
 
@@ -316,6 +527,10 @@ impl AiChatPanel {
             busy:             Rc::new(RefCell::new(false)),
             spinner,
             child_proc:       Arc::new(Mutex::new(None)),
+            stop_btn:         stop_btn.clone(),
+            ctx_lbl:          ctx_lbl.clone(),
+            warn_lbl:         warn_lbl.clone(),
+            file_switch:      file_switch.clone(),
         };
 
         // Wire Send button
@@ -339,6 +554,18 @@ impl AiChatPanel {
 
         // Wire Clear button
         { let p = panel.clone(); clear_btn.connect_clicked(move |_| p.clear_chat()); }
+
+        // Wire Stop button
+        {
+            let p = panel.clone();
+            stop_btn.connect_clicked(move |_| {
+                *p.busy.borrow_mut() = false;
+                p.spinner.stop();
+                p.spinner.set_visible(false);
+                p.send_btn.set_visible(true);
+                p.stop_btn.set_visible(false);
+            });
+        }
 
         // Wire Gear button → settings popover
         {
@@ -505,6 +732,25 @@ impl AiChatPanel {
         while let Some(child) = self.chat_box.first_child() {
             self.chat_box.remove(&child);
         }
+        self.ctx_lbl.set_text("Includes .ui + companion .rs context");
+        self.warn_lbl.set_visible(false);
+    }
+
+    fn update_ctx_lbl(&self) {
+        let msgs = self.messages.borrow();
+        let count = msgs.len();
+        let chars: usize = msgs.iter().map(|m| m.content.len()).sum();
+        if count == 0 {
+            self.ctx_lbl.set_text("Includes .ui + companion .rs context");
+        } else {
+            let k = chars / 1000;
+            if k > 0 {
+                self.ctx_lbl.set_text(&format!("{} msgs · ~{}k chars", count, k));
+            } else {
+                self.ctx_lbl.set_text(&format!("{} msgs · {} chars", count, chars));
+            }
+        }
+        self.warn_lbl.set_visible(count >= 10);
     }
 
     fn do_send(&self) {
@@ -516,10 +762,11 @@ impl AiChatPanel {
         if text.is_empty() { return; }
         buf.set_text("");
 
-        // Gather context
-        let ui_content = self.get_buffer_cb.borrow().as_ref().and_then(|cb| cb());
-        let file_path  = self.get_path_cb.borrow().as_ref().and_then(|cb| cb());
-        let companion  = self.get_companion_cb.borrow().as_ref().and_then(|cb| cb());
+        // Gather context (only if file switch is on)
+        let send_files = self.file_switch.is_active();
+        let ui_content = send_files.then(|| self.get_buffer_cb.borrow().as_ref().and_then(|cb| cb())).flatten();
+        let file_path  = send_files.then(|| self.get_path_cb.borrow().as_ref().and_then(|cb| cb())).flatten();
+        let companion  = send_files.then(|| self.get_companion_cb.borrow().as_ref().and_then(|cb| cb())).flatten();
 
         // Build user message with context prefix
         let mut prompt = String::new();
@@ -544,8 +791,10 @@ impl AiChatPanel {
 
         *self.busy.borrow_mut() = true;
         self.send_btn.set_visible(false);
+        self.stop_btn.set_visible(true);
         self.spinner.set_visible(true);
         self.spinner.start();
+        self.update_ctx_lbl();
 
         // Build message history for API
         let mut api_messages: Vec<(String, String)> = self.messages
@@ -613,6 +862,7 @@ impl AiChatPanel {
                         panel.spinner.stop();
                         panel.spinner.set_visible(false);
                         panel.send_btn.set_visible(true);
+                        panel.stop_btn.set_visible(false);
 
                         let buf = response_view.buffer();
                         let final_text = buf.text(&buf.start_iter(), &buf.end_iter(), false).to_string();
@@ -621,7 +871,13 @@ impl AiChatPanel {
                                 role:    "assistant".into(),
                                 content: final_text.clone(),
                             });
-                            panel.add_apply_buttons_for(&final_text, &response_view);
+                            if let Some(mb) = response_view.parent() {
+                                if let Some(msg_box) = mb.downcast_ref::<GtkBox>() {
+                                    render_response(msg_box, &response_view, &final_text);
+                                    panel.add_apply_buttons_for(&final_text, msg_box);
+                                }
+                            }
+                            panel.update_ctx_lbl();
                         }
                         panel.scroll_to_bottom();
                         return glib::ControlFlow::Break;
@@ -678,11 +934,12 @@ impl AiChatPanel {
         text_view.set_right_margin(2);
         text_view.set_top_margin(2);
         text_view.add_css_class("chat-body");
-        text_view.buffer().set_text(content);
+        apply_markup_to_view(&text_view, content);
 
         msg_box.append(&header_row);
         msg_box.append(&text_view);
         self.chat_box.append(&msg_box);
+        self.update_ctx_lbl();
         self.scroll_to_bottom();
     }
 
@@ -732,10 +989,7 @@ impl AiChatPanel {
         (text_view, anim_stop)
     }
 
-    fn add_apply_buttons_for(&self, text: &str, view: &TextView) {
-        let Some(parent)  = view.parent() else { return };
-        let Some(msg_box) = parent.downcast_ref::<GtkBox>() else { return };
-
+    fn add_apply_buttons_for(&self, text: &str, msg_box: &GtkBox) {
         // Add copy button to header row (always, even if no code blocks)
         if let Some(header) = msg_box.first_child() {
             if let Some(header_row) = header.downcast_ref::<GtkBox>() {

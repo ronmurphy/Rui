@@ -245,5 +245,27 @@ button.toolbar-icon {
 .chat-body text {
     background: transparent;
 }
+.chat-warn {
+    color: @warning_color;
+    font-size: 0.85em;
+    padding: 2px 4px;
+}
+.chat-code-block {
+    background-color: alpha(@theme_bg_color, 0.6);
+    border: 1px solid alpha(@borders, 0.4);
+    border-radius: 4px;
+    padding: 2px;
+}
+.chat-code-lang {
+    font-size: 0.75em;
+    padding: 2px 6px;
+    opacity: 0.6;
+}
+.chat-code-view {
+    font-family: monospace;
+}
+.chat-code-view text {
+    background: transparent;
+}
 "#.to_string()
 }
