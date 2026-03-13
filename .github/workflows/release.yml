@@ -1,72 +1,35 @@
-name: Release Rui (Windows & Linux)
+name: Release Rui
 on:
   push:
     tags:
       - 'v*'
 
 permissions:
-  contents: write
+  contents: write # Crucial for creating the release
 
 jobs:
-  # --- WINDOWS BUILD ---
   build-windows:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
-      - name: Build Windows Binary & Bundle DLLs
-        uses: docker://mglolenstine/gtk4-cross:latest
+      - name: Build Windows
+        # Added 'ghcr.io' prefix for more reliable pulling
+        uses: docker://ghcr.io/mglolenstine/gtk4-cross:latest
         with:
           args: /bin/bash -c "cargo build --target x86_64-pc-windows-gnu --release && ./package-win.sh"
-          # Note: package-win.sh is a small script we will create below
 
-      - name: Upload Windows Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: rui-windows
-          path: target/x86_64-pc-windows-gnu/release/rui-windows.zip
-
-  # --- LINUX APPIMAGE BUILD ---
   build-linux:
-    runs-on: ubuntu-22.04 # Use older LTS for maximum distro compatibility
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
-      
-      - name: Install GTK4 Dependencies
+      - name: Install Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y libgtk-4-dev libadwaita-1-dev libfuse2 wget
-      
-      - name: Install cargo-appimage
+      - name: Build AppImage
         run: |
           cargo install cargo-appimage
+          # Ensure appimagetool is available
           sudo wget https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage -O /usr/local/bin/appimagetool
           sudo chmod +x /usr/local/bin/appimagetool
-
-      - name: Create AppImage
-        run: cargo appimage
-
-      - name: Upload Linux Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: rui-linux
-          path: "*.AppImage"
-
-  # --- CREATE GITHUB RELEASE ---
-  publish:
-    needs: [build-windows, build-linux]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            rui-windows/rui-windows.zip
-            rui-linux/*.AppImage
-          draft: false
-          prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          cargo appimage
