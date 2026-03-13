@@ -17,7 +17,7 @@ fn main() {
             .collect::<Vec<_>>()
             .join("\n");
         let builder = gtk4::Builder::from_string(&ui_clean);
-        
+
         layout_app::connect_handlers(&builder);
 
         let window = gtk4::ApplicationWindow::builder()

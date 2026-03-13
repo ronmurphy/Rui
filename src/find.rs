@@ -2,14 +2,20 @@ use sourceview5::prelude::*;
 use gtk4::{
     Box as GtkBox, Button, CheckButton, Entry, Label, Orientation, SearchBar, SearchEntry,
 };
-use sourceview5::{Buffer, SearchContext, SearchSettings};
+use sourceview5::{Buffer, SearchContext, SearchSettings, View};
+use std::rc::Rc;
+use std::cell::RefCell;
 
 #[derive(Clone)]
 pub struct FindBar {
     pub widget:    SearchBar,
-    search_ctx:    std::rc::Rc<std::cell::RefCell<Option<SearchContext>>>,
+    search_ctx:    Rc<RefCell<Option<SearchContext>>>,
+    current_view:  Rc<RefCell<Option<View>>>,
     entry:         SearchEntry,
     replace_entry: Entry,
+    case_btn:      CheckButton,
+    regex_btn:     CheckButton,
+    match_lbl:     Label,
 }
 
 impl FindBar {
@@ -66,19 +72,25 @@ impl FindBar {
         vbox.append(&replace_row);
         bar.set_child(Some(&vbox));
 
-        let search_ctx: std::rc::Rc<std::cell::RefCell<Option<SearchContext>>> =
-            std::rc::Rc::new(std::cell::RefCell::new(None));
+        let search_ctx:   Rc<RefCell<Option<SearchContext>>> = Rc::new(RefCell::new(None));
+        let current_view: Rc<RefCell<Option<View>>>          = Rc::new(RefCell::new(None));
 
         {
             let ctx_rc = search_ctx.clone();
+            let view_rc = current_view.clone();
             next_btn.connect_clicked(move |_| {
-                if let Some(ctx) = ctx_rc.borrow().as_ref() { find_next(ctx); }
+                if let Some(ctx) = ctx_rc.borrow().as_ref() {
+                    find_next(ctx, view_rc.borrow().as_ref());
+                }
             });
         }
         {
             let ctx_rc = search_ctx.clone();
+            let view_rc = current_view.clone();
             prev_btn.connect_clicked(move |_| {
-                if let Some(ctx) = ctx_rc.borrow().as_ref() { find_prev(ctx); }
+                if let Some(ctx) = ctx_rc.borrow().as_ref() {
+                    find_prev(ctx, view_rc.borrow().as_ref());
+                }
             });
         }
 
@@ -111,18 +123,22 @@ impl FindBar {
         }
 
         {
-            let ctx_rc = search_ctx.clone();
+            let ctx_rc  = search_ctx.clone();
+            let view_rc = current_view.clone();
             entry.connect_activate(move |_| {
-                if let Some(ctx) = ctx_rc.borrow().as_ref() { find_next(ctx); }
+                if let Some(ctx) = ctx_rc.borrow().as_ref() {
+                    find_next(ctx, view_rc.borrow().as_ref());
+                }
             });
         }
 
         {
             let ctx_rc = search_ctx.clone();
             let rep_e  = replace_entry.clone();
+            let view_rc = current_view.clone();
             replace_btn.connect_clicked(move |_| {
                 if let Some(ctx) = ctx_rc.borrow().as_ref() {
-                    replace_current(ctx, &rep_e.text());
+                    replace_current(ctx, &rep_e.text(), view_rc.borrow().as_ref());
                 }
             });
         }
@@ -137,21 +153,90 @@ impl FindBar {
             });
         }
 
-        let fb = Self { widget: bar, search_ctx, entry: entry.clone(), replace_entry };
+        let fb = Self {
+            widget: bar,
+            search_ctx,
+            current_view,
+            entry: entry.clone(),
+            replace_entry,
+            case_btn,
+            regex_btn,
+            match_lbl,
+        };
         fb.widget.connect_entry(&fb.entry);
         fb
     }
 
-    pub fn set_buffer(&self, buffer: &Buffer) {
+    /// Call this whenever the active editor tab changes.
+    pub fn set_view(&self, view: &View) {
+        *self.current_view.borrow_mut() = Some(view.clone());
+
+        let buf = view.buffer()
+            .downcast::<Buffer>()
+            .expect("FindBar: view buffer is always sourceview5::Buffer");
+
         let settings = SearchSettings::new();
         settings.set_wrap_around(true);
-        settings.set_case_sensitive(false);
-        let ctx = SearchContext::new(buffer, Some(&settings));
+        // Preserve current checkbox state across tab switches
+        settings.set_case_sensitive(self.case_btn.is_active());
+        settings.set_regex_enabled(self.regex_btn.is_active());
+
         let text = self.entry.text().to_string();
         if !text.is_empty() {
             settings.set_search_text(Some(&text));
         }
+
+        let ctx = SearchContext::new(&buf, Some(&settings));
+
+        // Keep match count label live — GtkSourceView updates this asynchronously
+        {
+            let lbl  = self.match_lbl.clone();
+            let ent  = self.entry.clone();
+            ctx.connect_notify_local(Some("occurrences-count"), move |c, _| {
+                let count = c.occurrences_count();
+                let query = ent.text();
+                lbl.set_text(&if query.is_empty() {
+                    String::new()
+                } else if count > 0 {
+                    format!("{} matches", count)
+                } else {
+                    "No matches".to_string()
+                });
+            });
+        }
+
         *self.search_ctx.borrow_mut() = Some(ctx);
+    }
+
+    /// Backwards-compat shim — callers that only have a Buffer can still call this.
+    /// Prefer `set_view` so scrolling works correctly.
+    pub fn set_buffer(&self, buffer: &Buffer) {
+        let settings = SearchSettings::new();
+        settings.set_wrap_around(true);
+        settings.set_case_sensitive(self.case_btn.is_active());
+        settings.set_regex_enabled(self.regex_btn.is_active());
+        let text = self.entry.text().to_string();
+        if !text.is_empty() {
+            settings.set_search_text(Some(&text));
+        }
+        let ctx = SearchContext::new(buffer, Some(&settings));
+        {
+            let lbl = self.match_lbl.clone();
+            let ent = self.entry.clone();
+            ctx.connect_notify_local(Some("occurrences-count"), move |c, _| {
+                let count = c.occurrences_count();
+                let query = ent.text();
+                lbl.set_text(&if query.is_empty() {
+                    String::new()
+                } else if count > 0 {
+                    format!("{} matches", count)
+                } else {
+                    "No matches".to_string()
+                });
+            });
+        }
+        *self.search_ctx.borrow_mut() = Some(ctx);
+        *self.current_view.borrow_mut() = None;
     }
 
     pub fn reveal(&self) {
@@ -172,7 +257,7 @@ impl FindBar {
 }
 
 fn update_search(
-    ctx_rc: &std::rc::Rc<std::cell::RefCell<Option<SearchContext>>>,
+    ctx_rc: &Rc<RefCell<Option<SearchContext>>>,
     text: &str,
     case_sensitive: bool,
     use_regex: bool,
@@ -183,42 +268,50 @@ fn update_search(
         s.set_case_sensitive(case_sensitive);
         s.set_regex_enabled(use_regex);
         s.set_search_text(if text.is_empty() { None } else { Some(text) });
-        let count = ctx.occurrences_count();
-        let match_text = if text.is_empty() {
-            String::new()
-        } else if count > 0 {
-            format!("{} matches", count)
+        // Count will arrive via notify::occurrences-count; show "…" while waiting
+        if !text.is_empty() {
+            let count = ctx.occurrences_count();
+            lbl.set_text(&if count > 0 {
+                format!("{} matches", count)
+            } else {
+                "…".to_string()
+            });
         } else {
-            "No matches".to_string()
-        };
-        lbl.set_text(&match_text);
+            lbl.set_text("");
+        }
     }
 }
 
-fn find_next(ctx: &SearchContext) {
+fn find_next(ctx: &SearchContext, view: Option<&View>) {
     let buf = ctx.buffer();
-    let mark = buf.get_insert();
-    let cursor = buf.iter_at_mark(&mark);
-    if let Some((start, end, _)) = ctx.forward(&cursor) {
+    // Start from the END of any current selection so we advance past it,
+    // not re-find the same match.
+    let from = buf.selection_bounds()
+        .map(|(_, end)| end)
+        .unwrap_or_else(|| buf.iter_at_mark(&buf.get_insert()));
+    if let Some((start, end, _)) = ctx.forward(&from) {
         buf.select_range(&start, &end);
+        if let Some(v) = view {
+            v.scroll_to_iter(&mut start.clone(), 0.1, true, 0.5, 0.5);
+        }
     }
 }
 
-fn find_prev(ctx: &SearchContext) {
+fn find_prev(ctx: &SearchContext, view: Option<&View>) {
     let buf = ctx.buffer();
-    let mark = buf.get_insert();
-    let cursor = buf.iter_at_mark(&mark);
+    let cursor = buf.iter_at_mark(&buf.get_insert());
     if let Some((start, end, _)) = ctx.backward(&cursor) {
         buf.select_range(&start, &end);
+        if let Some(v) = view {
+            v.scroll_to_iter(&mut start.clone(), 0.1, true, 0.5, 0.5);
+        }
     }
 }
 
-fn replace_current(ctx: &SearchContext, replacement: &str) {
+fn replace_current(ctx: &SearchContext, replacement: &str, view: Option<&View>) {
     let buf = ctx.buffer();
     if let Some((mut ms, mut me)) = buf.selection_bounds() {
         let _ = ctx.replace(&mut ms, &mut me, replacement);
-        find_next(ctx);
-    } else {
-        find_next(ctx);
     }
+    find_next(ctx, view);
 }

@@ -560,11 +560,34 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
     sep3.set_margin_start(4); sep3.set_margin_end(4);
     master_toolbar.append(&sep3);
     
-    master_toolbar.append(&make_tool_btn("\u{f04b}", "Run", "app.run"));
-    master_toolbar.append(&make_tool_btn("\u{f085}", "Build", "app.build"));
-    master_toolbar.append(&make_tool_btn("\u{f1c0}", "Build Install", "app.build-install"));
-    master_toolbar.append(&make_tool_btn("\u{f04d}", "Stop", "app.stop"));
-    
+    // ── Run combo button ──────────────────────────────────────────────────────
+    let run_popover = gtk4::Popover::new();
+    let run_box = GtkBox::new(Orientation::Vertical, 2);
+    run_box.add_css_class("toolbar-popup");
+    run_box.set_margin_top(4);
+    run_box.set_margin_bottom(4);
+    run_box.append(&make_popup_entry("\u{f04b}", "Run",           "app.run",           &run_popover));
+    run_box.append(&make_popup_entry("\u{f085}", "Build",         "app.build",         &run_popover));
+    run_box.append(&make_popup_entry("\u{f1c0}", "Build Install", "app.build-install", &run_popover));
+    run_box.append(&gtk4::Separator::new(Orientation::Horizontal));
+    run_box.append(&make_popup_entry("\u{f00c}", "Check",         "app.check",         &run_popover));
+    run_box.append(&make_popup_entry("\u{f0a9}", "Clippy",        "app.clippy",        &run_popover));
+    run_box.append(&make_popup_entry("\u{f121}", "Format File",   "app.format-file",   &run_popover));
+    run_box.append(&gtk4::Separator::new(Orientation::Horizontal));
+    run_box.append(&make_popup_entry("\u{f04d}", "Stop",          "app.stop",          &run_popover));
+    run_popover.set_child(Some(&run_box));
+
+    let run_btn = gtk4::MenuButton::builder()
+        .label("\u{f04b}")
+        .tooltip_text("Run…")
+        .popover(&run_popover)
+        .build();
+    run_btn.add_css_class("nf");
+    run_btn.add_css_class("flat");
+    run_btn.add_css_class("toolbar-icon");
+    master_toolbar.append(&run_btn);
+    // ─────────────────────────────────────────────────────────────────────────
+
     let sep4 = gtk4::Separator::new(Orientation::Vertical);
     sep4.set_margin_start(4); sep4.set_margin_end(4);
     master_toolbar.append(&sep4);
@@ -847,7 +870,7 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         notebook.on_switch(move |_, tab| {
             let s = st.borrow();
             s.statusbar.connect_tab(tab);
-            s.find_bar.set_buffer(&tab.buffer());
+            s.find_bar.set_view(&tab.view);
             s.minimap.set_view(&tab.view);
             s.toolbox.set_buffer(&tab.buffer());
 
