@@ -75,9 +75,10 @@ pub fn build(app: &Application) -> (Menu, Menu, Menu) {
 
     // ── Run ──────────────────────────────────────────────────────
     let run_menu = Menu::new();
-    run_menu.append(Some("Run"),          Some("app.run"));
-    run_menu.append(Some("Build"),        Some("app.build"));
-    run_menu.append(Some("Stop"),         Some("app.stop"));
+    run_menu.append(Some("Run"),           Some("app.run"));
+    run_menu.append(Some("Build"),         Some("app.build"));
+    run_menu.append(Some("Build Install"), Some("app.build-install"));
+    run_menu.append(Some("Stop"),          Some("app.stop"));
     run_menu.append(Some("Open in Browser"), Some("app.open-browser"));
     run_menu.append(Some("Generate All Handlers"), Some("app.generate-handlers"));
     run_menu.append(Some("Template Library…"), Some("app.template-library"));

@@ -514,6 +514,7 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
     
     master_toolbar.append(&make_tool_btn("\u{f04b}", "Run", "app.run"));
     master_toolbar.append(&make_tool_btn("\u{f085}", "Build", "app.build"));
+    master_toolbar.append(&make_tool_btn("\u{f1c0}", "Build Install", "app.build-install"));
     master_toolbar.append(&make_tool_btn("\u{f04d}", "Stop", "app.stop"));
     
     let sep4 = gtk4::Separator::new(Orientation::Vertical);
@@ -1712,13 +1713,46 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
                 });
 
             if let Some(cd) = cargo_dir {
-                s.runner.run_in_dir(&cd, &["build"], &s.output);
+                s.runner.run_in_dir(&cd, &["build", "--release"], &s.output);
             } else if let Some(tab) = s.notebook.current_tab() {
                 if let Some(path) = tab.path() {
                     let output = s.output.clone();
                     let runner = s.runner.clone();
                     runner.run_file(&path, &output, || {}, |_| {});
                 }
+            }
+        });
+    }
+
+    // Run → Build Install
+    {
+        let st = state.clone();
+        menubar::connect_action(app, "build-install", move || {
+            let s = st.borrow();
+            // Save all modified files
+            for tab in s.notebook.all_tabs() {
+                if tab.path().is_some() && tab.is_modified() {
+                    let _ = tab.save();
+                }
+            }
+            let cargo_dir = s.project_dir.clone()
+                .filter(|pd| pd.join("Cargo.toml").exists())
+                .or_else(|| {
+                    s.notebook.current_tab()
+                        .and_then(|t| t.path())
+                        .and_then(|p| find_cargo_toml_dir(&p))
+                });
+
+            if let Some(cd) = cargo_dir {
+                // Generate .desktop and install.sh before building
+                if let Err(e) = generate_install_files(&cd, &s.output) {
+                    s.output.append_run_error(&format!("Failed to generate install files: {}", e));
+                    return;
+                }
+                s.runner.run_in_dir(&cd, &["build", "--release"], &s.output);
+            } else {
+                s.output.append_run_error("No Cargo.toml found — open a project first.");
+                s.output.show_panel();
             }
         });
     }
@@ -2556,4 +2590,161 @@ fn find_cargo_toml_dir(path: &std::path::Path) -> Option<PathBuf> {
         }
     }
     None
+}
+
+/// Generate .desktop file, install.sh, and copy app icon into the release build folder.
+fn generate_install_files(
+    project_dir: &std::path::Path,
+    output: &crate::output::OutputPanel,
+) -> Result<(), String> {
+    // Read project name from Cargo.toml
+    let cargo_toml_path = project_dir.join("Cargo.toml");
+    let cargo_text = std::fs::read_to_string(&cargo_toml_path)
+        .map_err(|e| format!("Cannot read Cargo.toml: {}", e))?;
+
+    let project_name = cargo_text
+        .lines()
+        .find(|l| l.trim().starts_with("name"))
+        .and_then(|l| l.split('=').nth(1))
+        .map(|v| v.trim().trim_matches('"').to_string())
+        .unwrap_or_else(|| {
+            project_dir
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "myapp".into())
+        });
+
+    // Pretty title: "my_game" → "My Game"
+    let pretty_name: String = project_name
+        .split('_')
+        .map(|w| {
+            let mut c = w.chars();
+            match c.next() {
+                None => String::new(),
+                Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    let release_dir = project_dir.join("target").join("release");
+    let _ = std::fs::create_dir_all(&release_dir);
+
+    // 1. Copy app icon
+    let rui_icon = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("data")
+        .join("app.png");
+    let icon_dest = release_dir.join(format!("{}.png", project_name));
+
+    // Try the compiled-in path first, fall back to common locations
+    let icon_src = if rui_icon.exists() {
+        rui_icon
+    } else {
+        // Fallback: look relative to the running binary or known paths
+        let fallbacks = [
+            std::path::PathBuf::from("/home/brad/Documents/Rui/data/app.png"),
+            std::env::current_exe()
+                .ok()
+                .and_then(|p| p.parent().map(|d| d.join("data").join("app.png")))
+                .unwrap_or_default(),
+        ];
+        fallbacks
+            .into_iter()
+            .find(|p| p.exists())
+            .unwrap_or_else(|| std::path::PathBuf::from("data/app.png"))
+    };
+
+    if icon_src.exists() {
+        std::fs::copy(&icon_src, &icon_dest)
+            .map_err(|e| format!("Failed to copy icon: {}", e))?;
+        output.append_run_line(&format!("✓ Copied icon → {}", icon_dest.display()));
+    } else {
+        output.append_run_line("⚠ Icon data/app.png not found — .desktop will reference it anyway");
+    }
+
+    // 2. Generate .desktop file
+    let desktop_content = format!(
+        "[Desktop Entry]\n\
+         Type=Application\n\
+         Name={pretty_name}\n\
+         Exec={bin_name}\n\
+         Icon={icon_name}\n\
+         Terminal=false\n\
+         Categories=GTK;Utility;\n\
+         Comment={pretty_name} — Built with Rui\n",
+        pretty_name = pretty_name,
+        bin_name = project_name,
+        icon_name = project_name,
+    );
+
+    let desktop_path = release_dir.join(format!("{}.desktop", project_name));
+    std::fs::write(&desktop_path, &desktop_content)
+        .map_err(|e| format!("Failed to write .desktop: {}", e))?;
+    output.append_run_line(&format!("✓ Generated {}", desktop_path.display()));
+
+    // 3. Generate install.sh
+    let install_script = format!(
+        r#"#!/bin/bash
+# Install script for {pretty_name}
+# Generated by Rui
+
+set -e
+
+BIN_NAME="{bin_name}"
+DESKTOP_FILE="{bin_name}.desktop"
+ICON_FILE="{bin_name}.png"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+PREFIX="${{PREFIX:-/usr/local}}"
+BIN_DIR="$PREFIX/bin"
+DESKTOP_DIR="${{XDG_DATA_HOME:-$HOME/.local/share}}/applications"
+ICON_DIR="${{XDG_DATA_HOME:-$HOME/.local/share}}/icons/hicolor/256x256/apps"
+
+echo "Installing {pretty_name}..."
+echo "  Binary  → $BIN_DIR/$BIN_NAME"
+echo "  Desktop → $DESKTOP_DIR/$DESKTOP_FILE"
+echo "  Icon    → $ICON_DIR/$ICON_FILE"
+echo ""
+
+# Install binary
+sudo install -Dm755 "$SCRIPT_DIR/$BIN_NAME" "$BIN_DIR/$BIN_NAME"
+
+# Install .desktop (update Exec and Icon paths)
+mkdir -p "$DESKTOP_DIR"
+sed -e "s|^Exec=.*|Exec=$BIN_DIR/$BIN_NAME|" \
+    -e "s|^Icon=.*|Icon=$ICON_DIR/$ICON_FILE|" \
+    "$SCRIPT_DIR/$DESKTOP_FILE" > "$DESKTOP_DIR/$DESKTOP_FILE"
+
+# Install icon
+mkdir -p "$ICON_DIR"
+cp "$SCRIPT_DIR/$ICON_FILE" "$ICON_DIR/$ICON_FILE"
+
+# Update desktop database
+if command -v update-desktop-database &>/dev/null; then
+    update-desktop-database "$DESKTOP_DIR" 2>/dev/null || true
+fi
+
+echo ""
+echo "✓ {pretty_name} installed successfully!"
+echo "  Run with: $BIN_NAME"
+"#,
+        pretty_name = pretty_name,
+        bin_name = project_name,
+    );
+
+    let install_path = release_dir.join("install.sh");
+    std::fs::write(&install_path, &install_script)
+        .map_err(|e| format!("Failed to write install.sh: {}", e))?;
+
+    // Make install.sh executable
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&install_path, std::fs::Permissions::from_mode(0o755));
+    }
+
+    output.append_run_line(&format!("✓ Generated {}", install_path.display()));
+    output.append_run_line("─── Building release... ───");
+
+    Ok(())
 }
