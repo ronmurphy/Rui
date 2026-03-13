@@ -214,29 +214,42 @@ pub fn generate_all_handlers(xml: &str, ui_filename: &str) -> String {
 
     for h in &handlers {
         let short = h.class.strip_prefix("Gtk").unwrap_or(&h.class);
+        // Signals with return types need the call as an expression (no semicolon)
+        let has_return = h.signal == "state-set" || h.signal == "activate-link";
+        let call = if has_return {
+            format!("{fn_name}(&w2)", fn_name = h.fn_name)
+        } else {
+            format!("{fn_name}(&w2);", fn_name = h.fn_name)
+        };
         if !h.id.is_empty() {
             out.push_str(&format!(
                 "    if let Some(w) = builder.object::<{short}>(\"{id}\") {{\n\
+                 \x20       let w2 = w.clone();\n\
                  \x20       w.{connect}(move {params} {{\n\
-                 \x20           {fn_name}(&w);\n\
+                 \x20           {call}\n\
                  \x20       }});\n\
                  \x20   }}\n\n",
                 short = short,
                 id = h.id,
                 connect = h.connect_method,
                 params = h.closure_params,
-                fn_name = h.fn_name,
+                call = call,
             ));
         } else {
+            let anon_call = if has_return {
+                format!("{fn_name}(…)", fn_name = h.fn_name)
+            } else {
+                format!("{fn_name}(…);", fn_name = h.fn_name)
+            };
             out.push_str(&format!(
                 "    // TODO: obtain a reference to the anonymous {short} and connect:\n\
                  \x20   // widget.{connect}(move {params} {{\n\
-                 \x20   //     {fn_name}(…);\n\
+                 \x20   //     {anon_call}\n\
                  \x20   // }});\n\n",
                 short = short,
                 connect = h.connect_method,
                 params = h.closure_params,
-                fn_name = h.fn_name,
+                anon_call = anon_call,
             ));
         }
     }
@@ -408,7 +421,7 @@ fn root_widget_id(ui: &str) -> String {
     "main_box".to_string()
 }
 
-pub fn scaffold_project(dir: &Path, project_name: &str, ui: &str) -> std::io::Result<()> {
+pub fn scaffold_project(dir: &Path, project_name: &str, ui: &str, win_title: &str, win_width: i32, win_height: i32, use_csd: bool) -> std::io::Result<()> {
     let src_dir = dir.join("src");
     std::fs::create_dir_all(&src_dir)?;
 
@@ -435,6 +448,21 @@ gtk4 = {{ version = "0.9", features = ["v4_10"] }}
 
     // ── src/main.rs — GTK4 bootstrap ──
     let root_id = root_widget_id(ui);
+    let csd_snippet = if use_csd {
+        "\n        // Wire HeaderBar as window titlebar (CSD — no double title bar)\n\
+         \x20       if let Some(hb) = builder.object::<gtk4::HeaderBar>(\"header_bar\") {\n\
+         \x20           // Unparent from grid first — a widget can only have one parent\n\
+         \x20           hb.unparent();\n\
+         \x20           window.set_titlebar(Some(&hb));\n\
+         \x20           // Remove top margin left by the now-empty header row\n\
+         \x20           if let Some(grid) = builder.object::<gtk4::Grid>(\"main_grid\") {\n\
+         \x20               grid.set_margin_top(0);\n\
+         \x20               grid.set_row_spacing(0);\n\
+         \x20           }\n\
+         \x20       }\n"
+    } else {
+        ""
+    };
     let main_rs = format!(
         r#"use gtk4::prelude::*;
 use gtk4::Application;
@@ -451,7 +479,12 @@ fn main() {{
         // Strip Rui design-time metadata (rui-*) before passing to GTK Builder.
         let ui_clean: String = ui
             .lines()
-            .filter(|l| !l.trim_start().starts_with("<property name=\"rui-"))
+            .filter(|l| {{
+                let t = l.trim_start();
+                !t.starts_with("<property name=\"rui-")
+                    && !t.starts_with("<style-name>")
+                    && !t.starts_with("<child><layout")
+            }})
             .collect::<Vec<_>>()
             .join("\n");
         let builder = gtk4::Builder::from_string(&ui_clean);
@@ -461,14 +494,13 @@ fn main() {{
         let window = gtk4::ApplicationWindow::builder()
             .application(app)
             .title("{title}")
-            .default_width(400)
-            .default_height(300)
+            .default_width({width})
+            .default_height({height})
             .build();
 
         if let Some(root) = builder.object::<gtk4::Widget>("{root_id}") {{
             window.set_child(Some(&root));
-        }}
-
+        }}{csd_snippet}
         window.present();
     }});
 
@@ -476,8 +508,11 @@ fn main() {{
 }}
 "#,
         name = project_name,
-        title = project_name,
+        title = win_title,
+        width = win_width,
+        height = win_height,
         root_id = root_id,
+        csd_snippet = csd_snippet,
     );
     std::fs::write(src_dir.join("main.rs"), &main_rs)?;
 
@@ -837,6 +872,219 @@ const TEMPLATES: &[Template] = &[
       </object>
     </child>"#,
     },
+    Template {
+        name: "Wizard / Steps",
+        description: "Step indicator row, content area, Back + Next buttons",
+        xml: r#"    <child>
+      <object class="GtkBox" id="wizard_box">
+        <property name="orientation">vertical</property>
+        <property name="spacing">12</property>
+        <property name="margin-start">24</property>
+        <property name="margin-end">24</property>
+        <property name="margin-top">16</property>
+        <property name="margin-bottom">16</property>
+        <child>
+          <object class="GtkBox" id="steps_row">
+            <property name="orientation">horizontal</property>
+            <property name="spacing">8</property>
+            <property name="halign">center</property>
+            <child>
+              <object class="GtkLabel" id="step1_lbl">
+                <property name="label">① Details</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkLabel">
+                <property name="label">›</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkLabel" id="step2_lbl">
+                <property name="label">② Options</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkLabel">
+                <property name="label">›</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkLabel" id="step3_lbl">
+                <property name="label">③ Confirm</property>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkFrame" id="wizard_content">
+            <property name="hexpand">true</property>
+            <property name="vexpand">true</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkBox" id="wizard_btn_row">
+            <property name="orientation">horizontal</property>
+            <property name="spacing">8</property>
+            <property name="halign">end</property>
+            <child>
+              <object class="GtkButton" id="back_btn">
+                <property name="label">Back</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkButton" id="next_btn">
+                <property name="label">Next</property>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>"#,
+    },
+    Template {
+        name: "Settings Page",
+        description: "Category list on the left, detail/preferences area on the right",
+        xml: r#"    <child>
+      <object class="GtkBox" id="settings_box">
+        <property name="orientation">horizontal</property>
+        <property name="spacing">0</property>
+        <property name="hexpand">true</property>
+        <property name="vexpand">true</property>
+        <child>
+          <object class="GtkScrolledWindow" id="settings_sidebar_scroll">
+            <property name="vexpand">true</property>
+            <property name="min-content-width">180</property>
+            <child>
+              <object class="GtkListBox" id="settings_categories">
+                <property name="selection-mode">single</property>
+                <child>
+                  <object class="GtkLabel" id="cat_general">
+                    <property name="label">General</property>
+                    <property name="xalign">0</property>
+                    <property name="margin-start">12</property>
+                    <property name="margin-top">8</property>
+                    <property name="margin-bottom">8</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="cat_appearance">
+                    <property name="label">Appearance</property>
+                    <property name="xalign">0</property>
+                    <property name="margin-start">12</property>
+                    <property name="margin-top">8</property>
+                    <property name="margin-bottom">8</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="cat_advanced">
+                    <property name="label">Advanced</property>
+                    <property name="xalign">0</property>
+                    <property name="margin-start">12</property>
+                    <property name="margin-top">8</property>
+                    <property name="margin-bottom">8</property>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkSeparator" id="settings_sep">
+            <property name="orientation">vertical</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkScrolledWindow" id="settings_detail_scroll">
+            <property name="hexpand">true</property>
+            <property name="vexpand">true</property>
+            <child>
+              <object class="GtkBox" id="settings_detail">
+                <property name="orientation">vertical</property>
+                <property name="spacing">16</property>
+                <property name="margin-start">24</property>
+                <property name="margin-end">24</property>
+                <property name="margin-top">16</property>
+                <property name="margin-bottom">16</property>
+                <child>
+                  <object class="GtkLabel" id="settings_title">
+                    <property name="label">General</property>
+                    <property name="xalign">0</property>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>"#,
+    },
+    Template {
+        name: "Form",
+        description: "Vertical stack of label + entry pairs with a Submit button",
+        xml: r#"    <child>
+      <object class="GtkBox" id="form_box">
+        <property name="orientation">vertical</property>
+        <property name="spacing">8</property>
+        <property name="margin-start">24</property>
+        <property name="margin-end">24</property>
+        <property name="margin-top">24</property>
+        <property name="margin-bottom">24</property>
+        <child>
+          <object class="GtkLabel" id="form_title">
+            <property name="label">Form Title</property>
+            <property name="xalign">0</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkLabel" id="field1_lbl">
+            <property name="label">Name</property>
+            <property name="xalign">0</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkEntry" id="field1_entry">
+            <property name="placeholder-text">Your name</property>
+            <property name="hexpand">true</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkLabel" id="field2_lbl">
+            <property name="label">Email</property>
+            <property name="xalign">0</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkEntry" id="field2_entry">
+            <property name="placeholder-text">you@example.com</property>
+            <property name="hexpand">true</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkLabel" id="field3_lbl">
+            <property name="label">Message</property>
+            <property name="xalign">0</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkScrolledWindow" id="field3_scroll">
+            <property name="hexpand">true</property>
+            <property name="min-content-height">80</property>
+            <child>
+              <object class="GtkTextView" id="field3_entry">
+                <property name="wrap-mode">word</property>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkButton" id="submit_btn">
+            <property name="label">Submit</property>
+            <property name="halign">end</property>
+          </object>
+        </child>
+      </object>
+    </child>"#,
+    },
 ];
 
 /// Show a modal Template Library dialog.
@@ -848,34 +1096,28 @@ pub fn show_template_library(
 ) {
     use gtk4::prelude::*;
     use gtk4::{
-        Dialog, Label, ListBox, Orientation, Box as GtkBox,
-        ScrolledWindow, ResponseType,
+        Label, ListBox, Orientation, Box as GtkBox,
+        ScrolledWindow, Window, Button, Align,
     };
 
-    let dialog = Dialog::builder()
+    let dialog = Window::builder()
         .title("Template Library")
         .transient_for(parent)
         .modal(true)
+        .destroy_with_parent(true)
+        .resizable(false)
         .default_width(460)
-        .default_height(420)
-        .use_header_bar(1)
         .build();
 
-    dialog.add_button("Cancel", ResponseType::Cancel);
-    let insert_btn = dialog.add_button("Insert", ResponseType::Accept);
-    insert_btn.add_css_class("suggested-action");
+    let outer = GtkBox::new(Orientation::Vertical, 12);
+    outer.set_margin_start(16);
+    outer.set_margin_end(16);
+    outer.set_margin_top(16);
+    outer.set_margin_bottom(16);
 
-    let content = dialog.content_area();
-    content.set_spacing(4);
-    content.set_margin_start(8);
-    content.set_margin_end(8);
-    content.set_margin_top(8);
-    content.set_margin_bottom(8);
-
-    let desc_label = Label::new(Some("Choose a template to insert at the cursor position."));
-    desc_label.set_halign(gtk4::Align::Start);
-    desc_label.set_margin_bottom(4);
-    content.append(&desc_label);
+    let desc_label = Label::new(Some("Choose a snippet to insert at the cursor position."));
+    desc_label.set_halign(Align::Start);
+    outer.append(&desc_label);
 
     let listbox = ListBox::new();
     listbox.set_selection_mode(gtk4::SelectionMode::Single);
@@ -888,12 +1130,13 @@ pub fn show_template_library(
         row_box.set_margin_end(8);
 
         let name_lbl = Label::new(Some(tmpl.name));
-        name_lbl.set_halign(gtk4::Align::Start);
+        name_lbl.set_halign(Align::Start);
         name_lbl.add_css_class("heading");
 
         let desc_lbl = Label::new(Some(tmpl.description));
-        desc_lbl.set_halign(gtk4::Align::Start);
+        desc_lbl.set_halign(Align::Start);
         desc_lbl.add_css_class("dim-label");
+        desc_lbl.set_wrap(true);
 
         row_box.append(&name_lbl);
         row_box.append(&desc_lbl);
@@ -906,21 +1149,37 @@ pub fn show_template_library(
         .child(&listbox)
         .hexpand(true)
         .vexpand(true)
-        .min_content_height(300)
+        .min_content_height(320)
         .build();
-    content.append(&scroll);
-    content.show();
+    outer.append(&scroll);
 
-    let nb = notebook.clone();
-    let _cfg = cfg.clone();
-    let lb = listbox.clone();
-    dialog.connect_response(move |dlg, resp| {
-        if resp == ResponseType::Accept {
+    // ── Buttons ──
+    let btn_row = GtkBox::new(Orientation::Horizontal, 8);
+    btn_row.set_halign(Align::End);
+    btn_row.set_margin_top(4);
+    let cancel_btn = Button::with_label("Cancel");
+    let insert_btn = Button::with_label("Insert");
+    insert_btn.add_css_class("suggested-action");
+    btn_row.append(&cancel_btn);
+    btn_row.append(&insert_btn);
+    outer.append(&btn_row);
+
+    dialog.set_child(Some(&outer));
+
+    {
+        let d = dialog.clone();
+        cancel_btn.connect_clicked(move |_| d.close());
+    }
+    {
+        let d = dialog.clone();
+        let nb = notebook.clone();
+        let _cfg = cfg.clone();
+        let lb = listbox.clone();
+        insert_btn.connect_clicked(move |_| {
             if let Some(row) = lb.selected_row() {
                 let idx = row.index() as usize;
                 if idx < TEMPLATES.len() {
                     let xml = TEMPLATES[idx].xml;
-                    // Insert into current tab's buffer at cursor
                     if let Some(tab) = nb.current_tab() {
                         let buf = tab.buffer();
                         let mut cursor = buf.iter_at_mark(&buf.get_insert());
@@ -932,9 +1191,9 @@ pub fn show_template_library(
                     }
                 }
             }
-        }
-        dlg.close();
-    });
+            d.close();
+        });
+    }
 
     dialog.present();
 }

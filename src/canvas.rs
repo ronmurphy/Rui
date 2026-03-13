@@ -100,6 +100,8 @@ pub struct Canvas {
     zoom_css: gtk4::CssProvider,
     /// Last rendered XML — stored so zoom changes can trigger a re-render.
     last_xml: Rc<RefCell<String>>,
+    /// Target window dimensions hint (from project main.rs). (0,0) = use natural size.
+    window_hint: Rc<Cell<(i32, i32)>>,
 }
 
 impl Canvas {
@@ -206,6 +208,7 @@ impl Canvas {
             zoom: Rc::new(Cell::new(1.0)),
             zoom_css,
             last_xml: Rc::new(RefCell::new(String::new())),
+            window_hint: Rc::new(Cell::new((0, 0))),
         }
     }
 
@@ -382,9 +385,12 @@ impl Canvas {
         ));
         self.container.set_hexpand(false);
         self.container.set_vexpand(false);
+        let hint = self.window_hint.get();
+        let req_w = if hint.0 > 0 { hint.0 } else { nat_w }.max(nat_w);
+        let req_h = if hint.1 > 0 { hint.1 } else { nat_h }.max(nat_h);
         self.container.set_size_request(
-            (nat_w as f64 * zoom) as i32,
-            (nat_h as f64 * zoom) as i32,
+            (req_w as f64 * zoom) as i32,
+            (req_h as f64 * zoom) as i32,
         );
 
         self.container.append(&result_box);
@@ -405,6 +411,12 @@ impl Canvas {
         self.container.set_size_request(-1, -1);
         self.status.set_text("Open a .ui file or create one via File → New .ui File");
         self.status.set_visible(true);
+    }
+
+    /// Set the target window dimensions so the canvas previews at the correct size.
+    /// Pass (0, 0) to reset to natural size.
+    pub fn set_window_hint(&self, width: i32, height: i32) {
+        self.window_hint.set((width, height));
     }
 
     /// Connect to a sourceview5 Buffer so the preview auto-updates

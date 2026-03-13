@@ -89,11 +89,27 @@ struct AppState {
     minimap: Map,
 }
 
+/// Parse default_width/default_height from a project's src/main.rs.
+/// Looks for `.default_width(N)` and `.default_height(N)` patterns.
+fn parse_window_size(ui_path: &std::path::Path) -> Option<(i32, i32)> {
+    let main_rs = ui_path.parent()?.join("src").join("main.rs");
+    let text = std::fs::read_to_string(&main_rs).ok()?;
+    let find = |key: &str| -> Option<i32> {
+        let pat = format!(".{}(", key);
+        let start = text.find(&pat)? + pat.len();
+        let end = text[start..].find(')')? + start;
+        text[start..end].trim().parse().ok()
+    };
+    let w = find("default_width")?;
+    let h = find("default_height")?;
+    Some((w, h))
+}
+
 /// Show the "New .ui File" layout dialog.
-/// Calls `on_confirm(xml)` with the ready-to-use .ui XML when the user clicks Create.
+/// Calls `on_confirm(xml, title, width, height, use_csd)` when the user clicks Create.
 fn show_layout_dialog(
     parent: &ApplicationWindow,
-    on_confirm: impl Fn(String) + 'static,
+    on_confirm: impl Fn(String, String, i32, i32, bool) + 'static,
 ) {
     let dialog = Window::builder()
         .title("New .ui File")
@@ -143,6 +159,57 @@ fn show_layout_dialog(
     hint.set_xalign(0.0);
     hint.add_css_class("dim-label");
     outer.append(&hint);
+
+    // ── Window properties ──
+    let win_frame = Frame::new(Some("Window"));
+    win_frame.set_margin_top(4);
+    let win_box = GtkBox::new(Orientation::Vertical, 8);
+    win_box.set_margin_start(12);
+    win_box.set_margin_end(12);
+    win_box.set_margin_top(8);
+    win_box.set_margin_bottom(8);
+
+    let title_row = GtkBox::new(Orientation::Horizontal, 8);
+    let title_lbl = Label::new(Some("Title:"));
+    title_lbl.set_width_chars(7);
+    title_lbl.set_xalign(0.0);
+    let title_entry = gtk4::Entry::new();
+    title_entry.set_placeholder_text(Some("My App"));
+    title_entry.set_hexpand(true);
+    title_row.append(&title_lbl);
+    title_row.append(&title_entry);
+
+    let size_row = GtkBox::new(Orientation::Horizontal, 8);
+    let width_lbl = Label::new(Some("Width:"));
+    width_lbl.set_width_chars(7);
+    width_lbl.set_xalign(0.0);
+    let width_spin = SpinButton::with_range(200.0, 3840.0, 10.0);
+    width_spin.set_value(800.0);
+    width_spin.set_width_chars(5);
+    let height_lbl = Label::new(Some("Height:"));
+    let height_spin = SpinButton::with_range(200.0, 2160.0, 10.0);
+    height_spin.set_value(600.0);
+    height_spin.set_width_chars(5);
+    size_row.append(&width_lbl);
+    size_row.append(&width_spin);
+    size_row.append(&height_lbl);
+    size_row.append(&height_spin);
+
+    win_box.append(&title_row);
+    win_box.append(&size_row);
+    win_frame.set_child(Some(&win_box));
+    outer.append(&win_frame);
+
+    // ── CSD option ──
+    let csd_check = CheckButton::with_label("Use GtkHeaderBar as titlebar (CSD — recommended for GNOME/GTK apps)");
+    csd_check.set_active(true);
+    let csd_hint = Label::new(Some("Unchecked: window manager draws the titlebar (SSD) — better for custom WMs"));
+    csd_hint.add_css_class("dim-label");
+    csd_hint.set_wrap(true);
+    csd_hint.set_xalign(0.0);
+    csd_hint.set_margin_start(24);
+    outer.append(&csd_check);
+    outer.append(&csd_hint);
 
     // ── Template picker (grid only) ──
     let tmpl_frame = Frame::new(Some("Template"));
@@ -214,9 +281,15 @@ fn show_layout_dialog(
             let use_grid = grid_radio.is_active();
             let rows = rows_spin.value() as i32;
             let cols = cols_spin.value() as i32;
+            let title = {
+                let t = title_entry.text().to_string();
+                if t.trim().is_empty() { "My App".to_string() } else { t }
+            };
+            let width  = width_spin.value() as i32;
+            let height = height_spin.value() as i32;
+            let use_csd = csd_check.is_active();
 
             let xml = if use_grid {
-                // Find selected template id from the list
                 let tmpl_id = tmpl_list
                     .selected_row()
                     .and_then(|row| row.child())
@@ -227,7 +300,7 @@ fn show_layout_dialog(
                 crate::codegen::make_box_template()
             };
             d.close();
-            on_confirm(xml);
+            on_confirm(xml, title, width, height, use_csd);
         });
     }
 
@@ -926,6 +999,9 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
             // Connect canvas, toolbox, and outline if this is a .ui file
             if let Some(path) = tab.path() {
                 if Canvas::is_ui_file(&path) {
+                    if let Some((w, h)) = parse_window_size(&path) {
+                        s.canvas.set_window_hint(w, h);
+                    }
                     s.canvas.connect_buffer(&tab.buffer());
                     s.toolbox.connect_buffer(&tab.buffer());
                     s.outline.connect_buffer(&tab.buffer());
@@ -994,6 +1070,9 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
             // Activate canvas + toolbox + outline + node_view if this is a .ui file
             if Canvas::is_ui_file(&path) {
                 if let Some(tab) = s.notebook.current_tab() {
+                    if let Some((w, h)) = parse_window_size(&path) {
+                        s.canvas.set_window_hint(w, h);
+                    }
                     s.canvas.connect_buffer(&tab.buffer());
                     s.toolbox.connect_buffer(&tab.buffer());
                     s.outline.connect_buffer(&tab.buffer());
@@ -1096,7 +1175,7 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         let win = window.clone();
         menubar::connect_action(app, "new-ui", move || {
             let st2 = st.clone();
-            show_layout_dialog(&win, move |template| {
+            show_layout_dialog(&win, move |template, _title, _width, _height, _use_csd| {
                 let s = st2.borrow();
                 s.notebook.close_all();
                 s.canvas.clear();
@@ -1144,8 +1223,8 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
 
                         // Show layout dialog before scaffolding
                         let st3 = st2.clone();
-                        show_layout_dialog(&win2, move |ui| {
-                            if let Err(e) = crate::codegen::scaffold_project(&dir, &project_name, &ui) {
+                        show_layout_dialog(&win2, move |ui, title, width, height, use_csd| {
+                            if let Err(e) = crate::codegen::scaffold_project(&dir, &project_name, &ui, &title, width, height, use_csd) {
                                 log::error!("Failed to scaffold project: {}", e);
                                 return;
                             }
