@@ -29,3 +29,11 @@ env_logger    = "0.11"
 
 # WebKit preview — optional, requires webkitgtk-6.0 system library
 webkit6 = { version = "0.4", optional = true }
+
+[package.metadata.bundle]
+name = "Rui"
+identifier = "com.ronmurphy.rui"
+icon = ["data/Rui.png"]
+bin = "rui"
+category = "Development"
+short_description = "GTK4 Rust UI Assistant"
