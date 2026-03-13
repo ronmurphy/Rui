@@ -5,7 +5,7 @@
 
 use gtk4::prelude::*;
 use gtk4::{
-    Box as GtkBox, Button, Entry, Label, Orientation,
+    Box as GtkBox, Button, ComboBoxText, Entry, Label, Orientation,
 };
 use webkit6::prelude::*;
 use webkit6::{WebView, NetworkSession, Settings};
@@ -80,10 +80,11 @@ impl AiSidebar {
         service_lbl.set_margin_end(2);
         toolbar.append(&service_lbl);
 
-        let url_entry = Entry::new();
-        url_entry.set_hexpand(true);
-        url_entry.set_placeholder_text(Some("URL"));
-        url_entry.add_css_class("monospace");
+        let combo = ComboBoxText::with_entry();
+        combo.set_hexpand(true);
+        for svc in SERVICES {
+            combo.append(Some(svc.url), svc.label);
+        }
 
         let go_btn = Button::with_label("Go");
 
@@ -100,64 +101,60 @@ impl AiSidebar {
         wv_container.append(&*wv_cell.borrow());
 
         wv_cell.borrow().load_uri(initial_service.url);
-        url_entry.set_text(initial_service.url);
-
-        // Service buttons
-        for svc in SERVICES {
-            let btn = Button::with_label(svc.label);
-            btn.set_tooltip_text(Some(svc.url));
-
-            let wvc     = wv_cell.clone();
-            let cont    = wv_container.clone();
-            let url_e   = url_entry.clone();
-            let svc_dir = session_base().join(svc.dir);
-            let svc_url = svc.url;
-
-            btn.connect_clicked(move |_| {
-                let old = wvc.borrow().clone();
-                cont.remove(&old);
-                let nw = make_web_view(svc_dir.clone());
-                nw.set_hexpand(true);
-                nw.set_vexpand(true);
-                nw.load_uri(svc_url);
-                cont.append(&nw);
-                *wvc.borrow_mut() = nw;
-                url_e.set_text(svc_url);
-            });
-
-            toolbar.append(&btn);
+        combo.set_active_id(Some(initial_service.url));
+        if let Some(entry) = combo.child().and_then(|w| w.downcast::<Entry>().ok()) {
+            entry.set_text(initial_service.url);
         }
 
-        // URL bar
-        let spacer = GtkBox::new(Orientation::Horizontal, 0);
-        spacer.set_hexpand(true);
-        toolbar.append(&spacer);
-        toolbar.append(&url_entry);
+        let wvc_combo = wv_cell.clone();
+        let cont_combo = wv_container.clone();
+        combo.connect_changed(move |c| {
+            if let Some(url) = c.active_id() {
+                // Find service to get session dir
+                if let Some(svc) = SERVICES.iter().find(|s| s.url == url.as_str()) {
+                    let old = wvc_combo.borrow().clone();
+                    cont_combo.remove(&old);
+                    let nw = make_web_view(session_base().join(svc.dir));
+                    nw.set_hexpand(true);
+                    nw.set_vexpand(true);
+                    nw.load_uri(svc.url);
+                    cont_combo.append(&nw);
+                    *wvc_combo.borrow_mut() = nw;
+                }
+            }
+        });
+
+        toolbar.append(&combo);
         toolbar.append(&go_btn);
 
-        {
-            let wvc = wv_cell.clone();
-            let e   = url_entry.clone();
-            go_btn.connect_clicked(move |_| {
+        // URL bar actions
+        let wvc_go = wv_cell.clone();
+        let combo_go = combo.clone();
+        go_btn.connect_clicked(move |_| {
+            if let Some(entry) = combo_go.child().and_then(|w| w.downcast::<Entry>().ok()) {
+                let mut url = entry.text().to_string();
+                if !url.contains("://") { url = format!("https://{}", url); }
+                wvc_go.borrow().load_uri(&url);
+            }
+        });
+        
+        let wvc_activate = wv_cell.clone();
+        if let Some(entry) = combo.child().and_then(|w| w.downcast::<Entry>().ok()) {
+            entry.connect_activate(move |e| {
                 let mut url = e.text().to_string();
                 if !url.contains("://") { url = format!("https://{}", url); }
-                wvc.borrow().load_uri(&url);
+                wvc_activate.borrow().load_uri(&url);
             });
         }
-        {
-            let wvc = wv_cell.clone();
-            url_entry.connect_activate(move |e| {
-                let mut url = e.text().to_string();
-                if !url.contains("://") { url = format!("https://{}", url); }
-                wvc.borrow().load_uri(&url);
-            });
-        }
-        {
-            let e = url_entry.clone();
-            wv_cell.borrow().connect_load_changed(move |wv, _| {
-                if let Some(uri) = wv.uri() { e.set_text(&uri); }
-            });
-        }
+        
+        let combo_load = combo.clone();
+        wv_cell.borrow().connect_load_changed(move |wv, _| {
+            if let Some(uri) = wv.uri() { 
+                if let Some(entry) = combo_load.child().and_then(|w| w.downcast::<Entry>().ok()) {
+                    entry.set_text(&uri);
+                }
+            }
+        });
 
         widget.append(&toolbar);
         widget.append(&wv_container);

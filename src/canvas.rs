@@ -10,13 +10,13 @@
 
 use gtk4::prelude::*;
 use gtk4::{
-    Adjustment, Box as GtkBox, Button, CenterBox, CheckButton,
+    Adjustment, ApplicationWindow, Box as GtkBox, Button, CenterBox, CheckButton,
     DragSource, DropDown, DropTarget, Entry, EventControllerScroll,
     EventControllerScrollFlags, Expander, Frame, GestureClick, GestureDrag,
     Grid, HeaderBar, Image, Label, LevelBar, ListBox, Notebook, Orientation,
     Overlay, Paned, PasswordEntry, Popover, ProgressBar, Scale, ScrolledWindow,
     SearchEntry, Separator, SpinButton, Spinner, Switch, TextView, ToggleButton,
-    Widget,
+    Widget, Window,
 };
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -1703,7 +1703,7 @@ fn build_widget(node: roxmltree::Node, ctx: &ClickCtx) -> Option<Widget> {
 
         // ── Special internal types ─────────────────────────────────
         // GtkStackPage, GtkNotebookPage — unwrap and return child
-        "GtkStackPage" | "GtkNotebookPage" => {
+        "GtkStackPage" | "GtkNotebookPage" | "GtkWindow" | "GtkApplicationWindow" => {
             // These are container wrappers; look for a "child" property
             // that contains an inline <object>
             let child_prop = node.children()
