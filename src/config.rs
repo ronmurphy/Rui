@@ -211,5 +211,23 @@ button.toolbar-icon {
     min-height: 24px;
     min-width: 28px;
 }
+/* Toolbar combo-button popover entries */
+.toolbar-popup {
+    padding: 2px;
+}
+.toolbar-popup button {
+    padding: 4px 8px;
+    border-radius: 6px;
+    border: none;
+    box-shadow: none;
+    background: transparent;
+    color: @view_fg_color;
+}
+.toolbar-popup button:hover {
+    background-color: alpha(@view_fg_color, 0.1);
+}
+.toolbar-popup label {
+    color: @view_fg_color;
+}
 "#.to_string()
 }

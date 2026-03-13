@@ -493,10 +493,55 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
     master_toolbar.set_margin_end(4);
     master_toolbar.set_halign(gtk4::Align::Center);
 
-    master_toolbar.append(&make_tool_btn("\u{f067}", "New Project", "app.new-project"));
-    master_toolbar.append(&make_tool_btn("\u{f115}", "Open Project", "app.open-project"));
-    master_toolbar.append(&make_tool_btn("\u{f0c7}", "Save All", "app.save-all"));
-    
+    // ── Project combo button (MenuButton + Popover) ───────────────────────────
+    // Reusable pattern: one toolbar icon → popover with labelled action rows.
+    let make_popup_entry = |icon: &str, label: &str, action: &str, pop: &gtk4::Popover| -> gtk4::Button {
+        let row = GtkBox::new(Orientation::Horizontal, 8);
+        row.set_margin_start(4);
+        row.set_margin_end(8);
+        row.set_margin_top(2);
+        row.set_margin_bottom(2);
+        let icon_lbl = gtk4::Label::new(Some(icon));
+        icon_lbl.add_css_class("nf");
+        let text_lbl = gtk4::Label::new(Some(label));
+        text_lbl.set_halign(gtk4::Align::Start);
+        text_lbl.set_hexpand(true);
+        row.append(&icon_lbl);
+        row.append(&text_lbl);
+        let btn = gtk4::Button::builder().build();
+        btn.set_child(Some(&row));
+        btn.add_css_class("toolbar-popup-entry");
+        let pop2 = pop.clone();
+        let act = action.to_string();
+        btn.connect_clicked(move |b| {
+            pop2.popdown();
+            let _ = b.activate_action(&act, None);
+        });
+        btn
+    };
+
+    let proj_popover = gtk4::Popover::new();
+    let proj_box = GtkBox::new(Orientation::Vertical, 2);
+    proj_box.add_css_class("toolbar-popup");
+    proj_box.set_margin_top(4);
+    proj_box.set_margin_bottom(4);
+    proj_box.append(&make_popup_entry("\u{f067}", "New Project…",  "app.new-project",  &proj_popover));
+    proj_box.append(&make_popup_entry("\u{f115}", "Open Project…", "app.open-project", &proj_popover));
+    proj_box.append(&gtk4::Separator::new(Orientation::Horizontal));
+    proj_box.append(&make_popup_entry("\u{f0c7}", "Save All",      "app.save-all",     &proj_popover));
+    proj_popover.set_child(Some(&proj_box));
+
+    let proj_btn = gtk4::MenuButton::builder()
+        .label("\u{f07b}")          // nf-fa-folder
+        .tooltip_text("Project…")
+        .popover(&proj_popover)
+        .build();
+    proj_btn.add_css_class("nf");
+    proj_btn.add_css_class("flat");
+    proj_btn.add_css_class("toolbar-icon");
+    master_toolbar.append(&proj_btn);
+    // ─────────────────────────────────────────────────────────────────────────
+
     let sep1 = gtk4::Separator::new(Orientation::Vertical);
     sep1.set_margin_start(4); sep1.set_margin_end(4);
     master_toolbar.append(&sep1);
