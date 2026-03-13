@@ -46,18 +46,21 @@ Key facts about the companion Rust code:
 - Uses gtk4::prelude::* for trait methods
 
 When you respond:
-- For NEW code or full rewrites: wrap in ```xml or ```rust code blocks
-- For FIXING compile errors or small edits: respond with a unified git diff in a ```diff code block
-  The diff format must be a valid unified diff:
-  ```diff
-  --- a/src/layout_app.rs
-  +++ b/src/layout_app.rs
-  @@ -10,6 +10,7 @@
-   context line
-  -old line
-  +new line
+- For NEW files or COMPLETE rewrites of a file: wrap in ```xml (for .ui) or ```rust (for .rs) blocks
+- For EDITING existing files (any change, fix, or addition): use ```strreplace blocks — NEVER use unified diffs
+  strreplace format (one block per change location):
+  ```strreplace
+  FILE: canvas.rs
+  FIND:
+  exact lines from the file to replace, copied verbatim
+  REPLACE:
+  the new lines to put in their place
   ```
-- The user can apply each block independently to the correct file
+  Rules:
+  - Copy FIND lines EXACTLY as they appear in the file — whitespace, punctuation, everything
+  - Include 3–6 lines so the location is unambiguous
+  - Use multiple strreplace blocks for multiple change locations
+  - FILE is just the filename (e.g. canvas.rs) or relative path (e.g. src/canvas.rs)
 - Keep responses concise and code-focused.
 - Before returning any code, silently review it for syntax errors, missing imports, wrong method names, and type mismatches. Fix all issues before responding — do not return broken code."#;
 
@@ -90,6 +93,8 @@ pub struct ClaudeCodePanel {
     on_apply_rs_cb:  Rc<RefCell<Option<Box<dyn Fn(&str)>>>>,
     /// Callback to open the diff tool with a diff block.
     on_apply_diff_cb: Rc<RefCell<Option<Box<dyn Fn(&str)>>>>,
+    /// Callback to apply a strreplace block (new surgical edit format).
+    on_apply_strreplace_cb: Rc<RefCell<Option<Box<dyn Fn(&str)>>>>,
     /// Whether a request is currently in flight.
     busy:          Rc<RefCell<bool>>,
     spinner:       Spinner,
@@ -239,6 +244,8 @@ impl ClaudeCodePanel {
             Rc::new(RefCell::new(None));
         let on_apply_diff_cb: Rc<RefCell<Option<Box<dyn Fn(&str)>>>> =
             Rc::new(RefCell::new(None));
+        let on_apply_strreplace_cb: Rc<RefCell<Option<Box<dyn Fn(&str)>>>> =
+            Rc::new(RefCell::new(None));
         let busy = Rc::new(RefCell::new(false));
         let child_proc = Arc::new(Mutex::new(None));
 
@@ -255,6 +262,7 @@ impl ClaudeCodePanel {
             on_apply_xml_cb,
             on_apply_rs_cb,
             on_apply_diff_cb,
+            on_apply_strreplace_cb,
             busy,
             spinner,
             child_proc,
@@ -350,6 +358,9 @@ impl ClaudeCodePanel {
     /// Register a callback to open the diff tool with a diff block.
     pub fn on_apply_diff<F: Fn(&str) + 'static>(&self, cb: F) {
         *self.on_apply_diff_cb.borrow_mut() = Some(Box::new(cb));
+    }
+    pub fn on_apply_strreplace<F: Fn(&str) + 'static>(&self, cb: F) {
+        *self.on_apply_strreplace_cb.borrow_mut() = Some(Box::new(cb));
     }
 
     /// Populate the input text box (used by the robot button in the output panel).
@@ -675,20 +686,21 @@ impl ClaudeCodePanel {
         // Record every block in the session history panel.
         if let Some(ref h) = *self.history.borrow() {
             for block in &blocks {
-                let display_name = if matches!(block.lang.as_str(), "diff" | "patch") {
+                let display_name = if matches!(block.lang.as_str(), "strreplace" | "edit") {
+                    Some(crate::strreplace::display_name(&block.code))
+                } else if matches!(block.lang.as_str(), "diff" | "patch") {
                     extract_diff_filename(&block.code)
                 } else {
                     extract_code_filename(&block.code, &block.lang)
                         .or_else(|| {
                             self.get_path_cb.borrow().as_ref().and_then(|cb| cb())
                                 .and_then(|p| {
-                                    let path = if matches!(block.lang.as_str(), "rust" | "rs") {
+                                    if matches!(block.lang.as_str(), "rust" | "rs") {
                                         std::path::Path::new(&p).with_extension("rs")
                                             .file_name().and_then(|n| n.to_str()).map(|s| s.to_string())
                                     } else {
                                         std::path::Path::new(&p).file_name().and_then(|n| n.to_str()).map(|s| s.to_string())
-                                    };
-                                    path
+                                    }
                                 })
                         })
                 };
@@ -697,11 +709,29 @@ impl ClaudeCodePanel {
         }
 
         for (i, block) in blocks.iter().enumerate() {
-            let is_xml  = matches!(block.lang.as_str(), "xml" | "ui");
-            let is_rust = matches!(block.lang.as_str(), "rust" | "rs");
-            let is_diff = matches!(block.lang.as_str(), "diff" | "patch");
+            let is_xml       = matches!(block.lang.as_str(), "xml" | "ui");
+            let is_rust      = matches!(block.lang.as_str(), "rust" | "rs");
+            let is_diff      = matches!(block.lang.as_str(), "diff" | "patch");
+            let is_strreplace = matches!(block.lang.as_str(), "strreplace" | "edit");
 
             let code = block.code.clone();
+
+            if is_strreplace {
+                let name = crate::strreplace::display_name(&code);
+                let btn = Button::with_label(&format!("Apply changes to {}", name));
+                btn.add_css_class("success");
+                btn.set_halign(gtk4::Align::Start);
+                btn.set_margin_top(4);
+                let cb = self.on_apply_strreplace_cb.clone();
+                let applied = format!("Applied to {} ✓", name);
+                btn.connect_clicked(move |b| {
+                    if let Some(f) = cb.borrow().as_ref() { f(&code); }
+                    b.set_label(&applied);
+                    b.set_sensitive(false);
+                });
+                msg_box.append(&btn);
+                continue;
+            }
 
             if is_diff {
                 // Extract filename from diff headers (--- a/file or +++ b/file)

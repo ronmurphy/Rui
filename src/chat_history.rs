@@ -57,9 +57,10 @@ pub struct ChatHistoryPanel {
     entries_box:     GtkBox,
     scroll:          ScrolledWindow,
     empty_lbl:       Label,
-    on_view_diff_cb: Rc<RefCell<Option<Box<dyn Fn(&str)>>>>,
-    on_apply_xml_cb: Rc<RefCell<Option<Box<dyn Fn(&str)>>>>,
-    on_apply_rs_cb:  Rc<RefCell<Option<Box<dyn Fn(&str)>>>>,
+    on_view_diff_cb:        Rc<RefCell<Option<Box<dyn Fn(&str)>>>>,
+    on_apply_xml_cb:        Rc<RefCell<Option<Box<dyn Fn(&str)>>>>,
+    on_apply_rs_cb:         Rc<RefCell<Option<Box<dyn Fn(&str)>>>>,
+    on_apply_strreplace_cb: Rc<RefCell<Option<Box<dyn Fn(&str)>>>>,
 }
 
 impl ChatHistoryPanel {
@@ -115,9 +116,10 @@ impl ChatHistoryPanel {
             entries_box: entries_box.clone(),
             scroll,
             empty_lbl: empty_lbl.clone(),
-            on_view_diff_cb: Rc::new(RefCell::new(None)),
-            on_apply_xml_cb: Rc::new(RefCell::new(None)),
-            on_apply_rs_cb:  Rc::new(RefCell::new(None)),
+            on_view_diff_cb:        Rc::new(RefCell::new(None)),
+            on_apply_xml_cb:        Rc::new(RefCell::new(None)),
+            on_apply_rs_cb:         Rc::new(RefCell::new(None)),
+            on_apply_strreplace_cb: Rc::new(RefCell::new(None)),
         };
 
         // Show empty placeholder initially
@@ -149,6 +151,9 @@ impl ChatHistoryPanel {
     pub fn on_apply_rs<F: Fn(&str) + 'static>(&self, cb: F) {
         *self.on_apply_rs_cb.borrow_mut() = Some(Box::new(cb));
     }
+    pub fn on_apply_strreplace<F: Fn(&str) + 'static>(&self, cb: F) {
+        *self.on_apply_strreplace_cb.borrow_mut() = Some(Box::new(cb));
+    }
 
     // ── Entry creation ────────────────────────────────────────────────────────
 
@@ -161,9 +166,10 @@ impl ChatHistoryPanel {
         let time    = current_time();
         let preview = display_name.unwrap_or_else(|| make_preview(lang, &content));
 
-        let is_diff = matches!(lang, "diff" | "patch");
-        let is_xml  = matches!(lang, "xml" | "ui");
-        let is_rust = matches!(lang, "rust" | "rs");
+        let is_diff      = matches!(lang, "diff" | "patch");
+        let is_xml       = matches!(lang, "xml" | "ui");
+        let is_rust      = matches!(lang, "rust" | "rs");
+        let is_strreplace = matches!(lang, "strreplace" | "edit");
 
         // ── Entry card ────────────────────────────────────────────────
         let card = GtkBox::new(Orientation::Vertical, 4);
@@ -233,6 +239,17 @@ impl ChatHistoryPanel {
             let btn = Button::with_label(&label);
             btn.add_css_class("suggested-action");
             let cb  = self.on_apply_rs_cb.clone();
+            let c   = content.clone();
+            btn.connect_clicked(move |_| {
+                if let Some(f) = cb.borrow().as_ref() { f(&c); }
+            });
+            btn_row.append(&btn);
+        } else if is_strreplace {
+            let name = crate::strreplace::display_name(&content);
+            let label = format!("Apply changes to {}", name);
+            let btn = Button::with_label(&label);
+            btn.add_css_class("success");
+            let cb  = self.on_apply_strreplace_cb.clone();
             let c   = content.clone();
             btn.connect_clicked(move |_| {
                 if let Some(f) = cb.borrow().as_ref() { f(&c); }

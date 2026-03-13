@@ -2528,9 +2528,50 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         });
     }
 
+    // ── Wire strreplace callbacks ──────────────────────────────────────────
+    {
+        let st = state.clone();
+        claude_panel.on_apply_strreplace(move |content| {
+            let base_dir = st.borrow().notebook.current_tab()
+                .and_then(|t| t.path())
+                .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+                .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+            match crate::strreplace::apply_strreplace_block(content, &base_dir) {
+                Ok(msg)  => log::info!("strreplace: {}", msg),
+                Err(err) => log::error!("strreplace failed: {}", err),
+            }
+        });
+    }
+    {
+        let st = state.clone();
+        ai_chat_panel.on_apply_strreplace(move |content| {
+            let base_dir = st.borrow().notebook.current_tab()
+                .and_then(|t| t.path())
+                .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+                .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+            match crate::strreplace::apply_strreplace_block(content, &base_dir) {
+                Ok(msg)  => log::info!("strreplace: {}", msg),
+                Err(err) => log::error!("strreplace failed: {}", err),
+            }
+        });
+    }
+
     // ── Wire session history panel ─────────────────────────────────────────
     claude_panel.set_history(chat_history.clone());
     ai_chat_panel.set_history(chat_history.clone());
+    {
+        let st = state.clone();
+        chat_history.on_apply_strreplace(move |content| {
+            let base_dir = st.borrow().notebook.current_tab()
+                .and_then(|t| t.path())
+                .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+                .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+            match crate::strreplace::apply_strreplace_block(content, &base_dir) {
+                Ok(msg)  => log::info!("strreplace (history): {}", msg),
+                Err(err) => log::error!("strreplace (history) failed: {}", err),
+            }
+        });
+    }
     {
         let st = state.clone();
         chat_history.on_apply_xml(move |code| {

@@ -41,6 +41,7 @@ mod claude_code;
 mod ai_provider;
 mod ai_chat_panel;
 mod chat_history;
+mod strreplace;
 mod node_view;
 mod lsp_client;
 
