@@ -2,8 +2,8 @@
 <interface>
   <object class="GtkApplicationWindow" id="main_window">
     <property name="title">SameGame</property>
-    <property name="default-width">580</property>
-    <property name="default-height">710</property>
+    <property name="default-width">600</property>
+    <property name="default-height">740</property>
     <child>
       <object class="GtkBox" id="root_box">
         <property name="orientation">vertical</property>
@@ -13,17 +13,33 @@
         <child>
           <object class="GtkBox" id="header_box">
             <property name="orientation">horizontal</property>
-            <property name="spacing">12</property>
+            <property name="spacing">8</property>
             <child>
               <object class="GtkLabel" id="title_label">
-                <property name="label">🎮  SameGame</property>
+                <property name="label">🍎 SameGame</property>
                 <property name="hexpand">true</property>
                 <property name="xalign">0</property>
               </object>
             </child>
             <child>
+              <object class="GtkLabel" id="level_label">
+                <property name="label">Lv.1</property>
+              </object>
+            </child>
+            <child>
               <object class="GtkLabel" id="score_label">
                 <property name="label">Score: 0</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkLabel" id="hiscore_label">
+                <property name="label">Hi: 0</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkButton" id="help_button">
+                <property name="label">❓</property>
+                <property name="tooltip-text">How to play</property>
               </object>
             </child>
             <child>

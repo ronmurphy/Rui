@@ -1167,6 +1167,45 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
                                 }
                             }
 
+                            // Auto-open all .rs files in src/
+                            let src_dir = dir.join("src");
+                            if src_dir.is_dir() {
+                                // Collect and sort so main.rs, layout_app.rs come in predictable order
+                                let mut rs_files: Vec<std::path::PathBuf> = Vec::new();
+                                if let Ok(entries) = std::fs::read_dir(&src_dir) {
+                                    for entry in entries.flatten() {
+                                        let p = entry.path();
+                                        if p.is_file() {
+                                            if let Some(ext) = p.extension() {
+                                                if ext == "rs" {
+                                                    rs_files.push(p);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                // Sort: main.rs first, then layout_app.rs, then rest alphabetically
+                                rs_files.sort_by(|a, b| {
+                                    let name_a = a.file_name().unwrap_or_default().to_string_lossy().to_string();
+                                    let name_b = b.file_name().unwrap_or_default().to_string_lossy().to_string();
+                                    let rank = |n: &str| -> u8 {
+                                        if n == "main.rs" { 0 }
+                                        else if n == "layout_app.rs" { 1 }
+                                        else { 2 }
+                                    };
+                                    rank(&name_a).cmp(&rank(&name_b))
+                                        .then_with(|| name_a.cmp(&name_b))
+                                });
+                                for rs_path in &rs_files {
+                                    s.notebook.open_file(rs_path, &s.cfg);
+                                }
+                            }
+
+                            // Switch back to layout.ui tab if it was opened
+                            if ui_path.exists() {
+                                s.notebook.open_file(&ui_path, &s.cfg);
+                            }
+
                             s.output.append_run_line(&format!(
                                 "✓ Opened project → {}",
                                 dir.display()
