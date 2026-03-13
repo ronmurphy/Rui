@@ -1,6 +1,6 @@
 use gtk4::prelude::*;
 use gtk4::{
-    Box as GtkBox, Button, Notebook, Orientation, ScrolledWindow, TextBuffer, TextTag,
+    Box as GtkBox, Button, Entry, Notebook, Orientation, ScrolledWindow, TextBuffer, TextTag,
     TextView,
 };
 use std::cell::RefCell;
@@ -10,7 +10,17 @@ use crate::diagnostics::{Diagnostic, DiagLevel};
 
 /// Callback invoked when the user clicks an error location in the Run output.
 pub type ErrorClickCb = Rc<RefCell<Option<Box<dyn Fn(PathBuf, i32, i32)>>>>;
-pub type AskAiCb = Rc<RefCell<Option<Box<dyn Fn(&str)>>>>;
+pub type AskAiCb      = Rc<RefCell<Option<Box<dyn Fn(&str)>>>>;
+pub type SearchReqCb  = Rc<RefCell<Option<Box<dyn Fn(&str)>>>>;
+
+/// A single ripgrep match — file path, 1-based line/col, matched line text.
+#[derive(Clone, Debug)]
+pub struct SearchMatch {
+    pub file: PathBuf,
+    pub line: u64,
+    pub col:  u64,
+    pub text: String,
+}
 
 #[derive(Clone)]
 pub struct OutputPanel {
@@ -33,6 +43,13 @@ pub struct OutputPanel {
     on_ask_ai: AskAiCb,
     /// Accumulated error lines (populated by append_run_error).
     errors: Rc<RefCell<Vec<String>>>,
+    // ── Search tab ────────────────────────────────────────────────────────────
+    search_buf:      TextBuffer,
+    search_view:     TextView,
+    search_entry:    Entry,
+    search_link_tag: TextTag,
+    search_file_tag: TextTag,
+    on_search_request: SearchReqCb,
 }
 
 impl OutputPanel {
@@ -84,9 +101,65 @@ impl OutputPanel {
         prob_buf.tag_table().add(&prob_warning_tag);
         prob_buf.tag_table().add(&prob_link_tag);
 
+        // ── Search tab ────────────────────────────────────────────────────────
+        let (search_view, search_buf) = make_text_view();
+
+        let search_file_tag = TextTag::builder()
+            .name("search-file")
+            .foreground("#cba6f7")
+            .weight(700)
+            .build();
+        let search_link_tag = TextTag::builder()
+            .name("search-link")
+            .foreground("#89b4fa")
+            .underline(gtk4::pango::Underline::Single)
+            .build();
+        search_buf.tag_table().add(&search_file_tag);
+        search_buf.tag_table().add(&search_link_tag);
+
+        let search_entry = Entry::builder()
+            .placeholder_text("Search in project…")
+            .hexpand(true)
+            .build();
+        let search_go_btn = Button::with_label("Search");
+        let search_bar = GtkBox::new(Orientation::Horizontal, 4);
+        search_bar.set_margin_start(4);
+        search_bar.set_margin_end(4);
+        search_bar.set_margin_top(4);
+        search_bar.set_margin_bottom(2);
+        search_bar.append(&search_entry);
+        search_bar.append(&search_go_btn);
+
+        let search_tab_box = GtkBox::new(Orientation::Vertical, 0);
+        search_tab_box.append(&search_bar);
+        search_tab_box.append(&wrap_scroll(search_view.clone()));
+
+        let on_search_request: SearchReqCb = Rc::new(RefCell::new(None));
+        {
+            let cb = on_search_request.clone();
+            let ent = search_entry.clone();
+            search_go_btn.connect_clicked(move |_| {
+                let q = ent.text().to_string();
+                if !q.is_empty() {
+                    if let Some(f) = cb.borrow().as_ref() { f(&q); }
+                }
+            });
+        }
+        {
+            let cb = on_search_request.clone();
+            search_entry.connect_activate(move |e| {
+                let q = e.text().to_string();
+                if !q.is_empty() {
+                    if let Some(f) = cb.borrow().as_ref() { f(&q); }
+                }
+            });
+        }
+        // ─────────────────────────────────────────────────────────────────────
+
         stack.add_titled(&wrap_scroll(out_view.clone()), Some("output"), "Output");
         stack.add_titled(&wrap_scroll(prob_view.clone()), Some("problems"), "Problems");
         stack.add_titled(&wrap_scroll(run_view.clone()), Some("run"), "Run");
+        stack.add_titled(&search_tab_box, Some("search"), "Search");
 
         let switcher = gtk4::StackSwitcher::new();
         switcher.set_stack(Some(&stack));
@@ -150,6 +223,9 @@ impl OutputPanel {
         // Wire click handler on the Problems text view
         wire_click_handler(&prob_view, &prob_buf, "prob-link", &on_error_click);
 
+        // Wire click handler on the Search text view
+        wire_click_handler_custom(&search_view, &search_buf, "search-link", &on_error_click, parse_search_location);
+
         Self {
             widget: vbox,
             stack,
@@ -167,6 +243,12 @@ impl OutputPanel {
             on_error_click,
             on_ask_ai,
             errors,
+            search_buf,
+            search_view,
+            search_entry,
+            search_link_tag,
+            search_file_tag,
+            on_search_request,
         }
     }
 
@@ -252,6 +334,58 @@ impl OutputPanel {
         self.widget.set_visible(true);
     }
 
+    /// Set the callback invoked when the user submits a search query.
+    pub fn set_on_search_request<F: Fn(&str) + 'static>(&self, f: F) {
+        *self.on_search_request.borrow_mut() = Some(Box::new(f));
+    }
+
+    /// Populate the Search tab with ripgrep results.
+    pub fn set_search_results(&self, query: &str, matches: &[SearchMatch]) {
+        self.search_buf.set_text("");
+        if matches.is_empty() {
+            append_line(&self.search_buf, &format!("No results for «{}»", query), None::<&TextTag>);
+            self.stack.set_visible_child_name("search");
+            self.widget.set_visible(true);
+            return;
+        }
+
+        // Group by file
+        let mut current_file: Option<&PathBuf> = None;
+        let mut file_count = 0usize;
+        for m in matches {
+            if current_file != Some(&m.file) {
+                // Count matches for this file
+                let n = matches.iter().filter(|x| x.file == m.file).count();
+                let header = format!("── {} ({} match{}) ──",
+                    m.file.display(), n, if n == 1 { "" } else { "es" });
+                append_line(&self.search_buf, &header, Some(&self.search_file_tag as &TextTag));
+                current_file = Some(&m.file);
+                file_count += 1;
+            }
+            // Clickable location line
+            let loc = format!("  --> {}:{}:{}", m.file.display(), m.line, m.col);
+            append_line(&self.search_buf, &loc, Some(&self.search_link_tag as &TextTag));
+            // Match text (plain, indented)
+            let trimmed = m.text.trim_end_matches('\n');
+            append_line(&self.search_buf, &format!("      {}", trimmed), None::<&TextTag>);
+        }
+
+        let summary = format!("\n{} match{} in {} file{}",
+            matches.len(), if matches.len() == 1 { "" } else { "es" },
+            file_count,   if file_count   == 1 { "" } else { "s" });
+        append_line(&self.search_buf, &summary, None::<&TextTag>);
+
+        self.stack.set_visible_child_name("search");
+        self.widget.set_visible(true);
+    }
+
+    /// Show output panel on the Search tab and focus the query entry.
+    pub fn focus_search(&self) {
+        self.widget.set_visible(true);
+        self.stack.set_visible_child_name("search");
+        self.search_entry.grab_focus();
+    }
+
     pub fn show_panel(&self) {
         self.widget.set_visible(true);
     }
@@ -274,6 +408,38 @@ impl OutputPanel {
         // Do not place cursor! Scroll to mark instead.
         self.run_view.scroll_to_mark(&mark, 0.0, true, 0.0, 1.0);
     }
+}
+
+/// Like wire_click_handler but uses a custom parser function.
+fn wire_click_handler_custom(
+    view: &TextView,
+    buf: &TextBuffer,
+    tag_name: &'static str,
+    cb: &ErrorClickCb,
+    parser: fn(&str) -> Option<(PathBuf, i32, i32)>,
+) {
+    let rv  = view.clone();
+    let buf = buf.clone();
+    let cb  = cb.clone();
+    let gesture = gtk4::GestureClick::new();
+    gesture.set_button(1);
+    gesture.connect_released(move |_, _, x, y| {
+        let (bx, by) = rv.window_to_buffer_coords(gtk4::TextWindowType::Widget, x as i32, y as i32);
+        if let Some(iter) = rv.iter_at_location(bx, by) {
+            if let Some(tag) = buf.tag_table().lookup(tag_name) {
+                if iter.has_tag(&tag) {
+                    let mut ls = iter; ls.set_line_offset(0);
+                    let mut le = iter;
+                    if !le.ends_line() { le.forward_to_line_end(); }
+                    let text = buf.text(&ls, &le, false).to_string();
+                    if let Some((path, line, col)) = parser(&text) {
+                        if let Some(ref f) = *cb.borrow() { f(path, line, col); }
+                    }
+                }
+            }
+        }
+    });
+    view.add_controller(gesture);
 }
 
 fn wire_click_handler(view: &TextView, buf: &TextBuffer, tag_name: &'static str, cb: &ErrorClickCb) {
@@ -344,6 +510,11 @@ fn append_line(buf: &TextBuffer, text: &str, tag: Option<&TextTag>) {
 fn is_error_location(text: &str) -> bool {
     let trimmed = text.trim();
     trimmed.starts_with("--> ")
+}
+
+/// Parse `  --> /abs/path/file.rs:42:5` (search results format) into (PathBuf, line, col).
+fn parse_search_location(text: &str) -> Option<(PathBuf, i32, i32)> {
+    parse_error_location(text)
 }
 
 /// Parse ` --> path/file.rs:42:5` into (PathBuf, line, col).

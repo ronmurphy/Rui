@@ -46,9 +46,10 @@ pub fn build(app: &Application) -> (Menu, Menu, Menu) {
     edit_menu.append(Some("Copy"),       Some("app.copy"));
     edit_menu.append(Some("Paste"),      Some("app.paste"));
     edit_menu.append(Some("Select All"), Some("app.select-all"));
-    edit_menu.append(Some("Find…"),          Some("app.find"));
-    edit_menu.append(Some("Find & Replace…"), Some("app.find-replace"));
-    edit_menu.append(Some("Go to Line…"),     Some("app.goto-line"));
+    edit_menu.append(Some("Find…"),              Some("app.find"));
+    edit_menu.append(Some("Find & Replace…"),    Some("app.find-replace"));
+    edit_menu.append(Some("Search in Files…"),   Some("app.search-in-files"));
+    edit_menu.append(Some("Go to Line…"),        Some("app.goto-line"));
 
     let edit_item = MenuItem::new(Some("Edit"), None);
     edit_item.set_submenu(Some(&edit_menu));
@@ -115,7 +116,7 @@ pub fn build(app: &Application) -> (Menu, Menu, Menu) {
     for name in &[
         "new-tab", "new-project", "new-ui", "open", "open-project", "save", "save-all", "save-as", "close-tab",
         "designer-undo", "designer-redo",
-        "cut", "copy", "paste", "select-all", "find", "find-replace", "goto-line",
+        "cut", "copy", "paste", "select-all", "find", "find-replace", "search-in-files", "goto-line",
         "toggle-sidebar", "toggle-output", "toggle-canvas", "toggle-toolbox", "toggle-preview", "toggle-minimap",
         "layout-code", "layout-designer",
         "run", "build", "build-install", "stop", "check", "clippy", "format-file", "open-browser", "generate-handlers", "template-library",

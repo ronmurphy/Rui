@@ -1618,6 +1618,38 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         });
     }
 
+    // Edit → Search in Files
+    {
+        let st = state.clone();
+        menubar::connect_action(app, "search-in-files", move || {
+            st.borrow().output.focus_search();
+        });
+    }
+
+    // Wire the Search tab's submit button → run ripgrep
+    {
+        let st = state.clone();
+        let output = output.clone();
+        output.set_on_search_request(move |query| {
+            let s = st.borrow();
+            let dir = s.project_dir.clone()
+                .filter(|pd| pd.exists())
+                .or_else(|| s.notebook.current_tab().and_then(|t| t.path())
+                    .and_then(|p| find_cargo_toml_dir(&p)))
+                .or_else(|| s.notebook.current_tab().and_then(|t| t.path())
+                    .and_then(|p| p.parent().map(|d| d.to_path_buf())));
+            let Some(dir) = dir else {
+                s.output.set_search_results(query, &[]);
+                return;
+            };
+            let output2 = s.output.clone();
+            let q = query.to_string();
+            crate::runner::RunManager::run_ripgrep(q.clone(), dir, move |matches| {
+                output2.set_search_results(&q, &matches);
+            });
+        });
+    }
+
     // Edit → Go to Line
     {
         let st = state.clone();
@@ -2505,8 +2537,9 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
     app.set_accels_for_action("app.save",          &["<Ctrl>S"]);
     app.set_accels_for_action("app.save-as",       &["<Ctrl><Shift>S"]);
     app.set_accels_for_action("app.close-tab",     &["<Ctrl>W"]);
-    app.set_accels_for_action("app.find",          &["<Ctrl>F"]);
-    app.set_accels_for_action("app.find-replace",  &["<Ctrl>H"]);
+    app.set_accels_for_action("app.find",             &["<Ctrl>F"]);
+    app.set_accels_for_action("app.find-replace",    &["<Ctrl>H"]);
+    app.set_accels_for_action("app.search-in-files", &["<Ctrl><Shift>F"]);
     app.set_accels_for_action("app.goto-line",     &["<Ctrl>G"]);
     app.set_accels_for_action("app.toggle-sidebar", &["<Ctrl>B"]);
     app.set_accels_for_action("app.toggle-output", &["<Ctrl>J"]);

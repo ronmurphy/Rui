@@ -460,6 +460,48 @@ impl RunManager {
         });
     }
 
+    /// Run `rg --json <query> <dir>`, parse results, call `on_done(matches)`.
+    pub fn run_ripgrep(
+        query: String,
+        dir: PathBuf,
+        on_done: impl Fn(Vec<crate::output::SearchMatch>) + 'static,
+    ) {
+        let (tx, rx) = async_channel::unbounded::<String>();
+        std::thread::spawn(move || {
+            let child = Command::new("rg")
+                .args(["--json", "--", &query])
+                .current_dir(&dir)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .spawn();
+            let Ok(mut child) = child else {
+                log::warn!("rg not found — install ripgrep for project-wide search");
+                return;
+            };
+            if let Some(out) = child.stdout.take() {
+                for line in std::io::BufReader::new(out).lines().flatten() {
+                    let _ = tx.send_blocking(line);
+                }
+            }
+            let _ = child.wait();
+        });
+
+        gtk4::glib::spawn_future_local(async move {
+            let mut matches: Vec<crate::output::SearchMatch> = Vec::new();
+            while let Ok(line) = rx.recv().await {
+                let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
+                if val["type"].as_str() != Some("match") { continue }
+                let data = &val["data"];
+                let file = PathBuf::from(data["path"]["text"].as_str().unwrap_or(""));
+                let line_num = data["line_number"].as_u64().unwrap_or(1);
+                let col = data["submatches"][0]["start"].as_u64().unwrap_or(0) + 1;
+                let text = data["lines"]["text"].as_str().unwrap_or("").to_string();
+                matches.push(crate::output::SearchMatch { file, line: line_num, col, text });
+            }
+            on_done(matches);
+        });
+    }
+
     pub fn open_in_browser(path: &Path) {
         let url = format!("file://{}", path.display());
         let _ = Command::new("xdg-open").arg(&url).spawn();
