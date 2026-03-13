@@ -499,12 +499,16 @@ fn manual_apply(diff: &str, base_dir: &std::path::Path) -> Result<String, String
     Ok(format!("Applied {} hunk(s) manually to {} file(s)", applied_count, by_file.len()))
 }
 
+enum DiffOp {
+    Context(String),
+    Remove(String),
+    Add(String),
+}
+
 struct DiffHunk {
     file:      String,
     old_start: usize,
-    context:   Vec<String>,  // lines from the '-' and ' ' side (what we search for)
-    removals:  Vec<usize>,   // indices into `context` that are removals (not context)
-    additions: Vec<String>,  // lines to add ('+' lines)
+    ops:       Vec<DiffOp>,
 }
 
 fn parse_diff_hunks(diff: &str) -> Result<Vec<DiffHunk>, String> {
@@ -534,10 +538,8 @@ fn parse_diff_hunks(diff: &str) -> Result<Vec<DiffHunk>, String> {
             let old_start = parse_hunk_header(line).unwrap_or(1);
             i += 1;
 
-            // Collect hunk body
-            let mut context = Vec::new();
-            let mut removals = Vec::new();
-            let mut additions = Vec::new();
+            // Collect hunk body preserving op order
+            let mut ops = Vec::new();
 
             while i < lines.len() {
                 let l = lines[i];
@@ -545,18 +547,17 @@ fn parse_diff_hunks(diff: &str) -> Result<Vec<DiffHunk>, String> {
                     break;
                 }
                 if let Some(rem) = l.strip_prefix('-') {
-                    removals.push(context.len());
-                    context.push(rem.to_string());
+                    ops.push(DiffOp::Remove(rem.to_string()));
                 } else if let Some(add) = l.strip_prefix('+') {
-                    additions.push(add.to_string());
+                    ops.push(DiffOp::Add(add.to_string()));
                 } else if let Some(ctx) = l.strip_prefix(' ') {
-                    context.push(ctx.to_string());
+                    ops.push(DiffOp::Context(ctx.to_string()));
                 } else if l == "\\ No newline at end of file" {
                     // skip
                 } else {
                     // Unrecognized line — might be context without leading space
                     // (common AI mistake). Treat as context.
-                    context.push(l.to_string());
+                    ops.push(DiffOp::Context(l.to_string()));
                 }
                 i += 1;
             }
@@ -564,9 +565,7 @@ fn parse_diff_hunks(diff: &str) -> Result<Vec<DiffHunk>, String> {
             hunks.push(DiffHunk {
                 file: current_file.clone(),
                 old_start,
-                context,
-                removals,
-                additions,
+                ops,
             });
             continue;
         }
@@ -585,73 +584,38 @@ fn parse_hunk_header(line: &str) -> Option<usize> {
 }
 
 fn apply_hunk(lines: &[String], hunk: &DiffHunk) -> Result<Vec<String>, String> {
-    if hunk.context.is_empty() && hunk.additions.is_empty() {
+    // "old" side = Context + Remove lines in order (what we search for in the file)
+    let old: Vec<String> = hunk.ops.iter().filter_map(|op| match op {
+        DiffOp::Context(s) | DiffOp::Remove(s) => Some(s.clone()),
+        DiffOp::Add(_) => None,
+    }).collect();
+
+    // "new" side = Context + Add lines in order (the replacement)
+    let new: Vec<String> = hunk.ops.iter().filter_map(|op| match op {
+        DiffOp::Context(s) | DiffOp::Add(s) => Some(s.clone()),
+        DiffOp::Remove(_) => None,
+    }).collect();
+
+    if old.is_empty() && new.is_empty() {
         return Ok(lines.to_vec());
     }
 
-    // Build the "old" lines we need to find (context + removals in order)
-    // and the "new" lines to replace with (context minus removals + additions)
-    let removal_set: std::collections::HashSet<usize> = hunk.removals.iter().cloned().collect();
-
-    // Try to find the context block in the file, starting near old_start
     let search_start = if hunk.old_start > 0 { hunk.old_start - 1 } else { 0 };
-    let match_pos = find_context(lines, &hunk.context, search_start);
-
-    let match_pos = match match_pos {
+    let match_pos = match find_context(lines, &old, search_start) {
         Some(pos) => pos,
         None => {
-            // Context not found — generate helpful error
-            let first_ctx = hunk.context.first().map(|s| s.as_str()).unwrap_or("(empty)");
+            let first = old.first().map(|s| s.as_str()).unwrap_or("(empty)");
             return Err(format!(
                 "Could not find matching context near line {} — first context line: \"{}\"",
-                hunk.old_start, first_ctx
+                hunk.old_start, first
             ));
         }
     };
 
-    // Build the replacement
-    let mut replacement = Vec::new();
-    let mut ctx_idx = 0;
-    let mut add_idx = 0;
-
-    // Walk through context lines; when we hit a removal, skip it and insert additions instead
-    // Additions go before the first non-removal context line after a removal block
-    let mut pending_additions = true;
-    for (i, ctx_line) in hunk.context.iter().enumerate() {
-        if removal_set.contains(&i) {
-            // This is a removed line — skip it
-            // Insert any pending additions at the first removal
-            if pending_additions && add_idx < hunk.additions.len() {
-                // We'll insert additions after processing all consecutive removals
-            }
-            continue;
-        } else {
-            // Context line (kept) — but first, flush any pending additions
-            if pending_additions {
-                while add_idx < hunk.additions.len() {
-                    replacement.push(hunk.additions[add_idx].clone());
-                    add_idx += 1;
-                }
-                pending_additions = false;
-            }
-            replacement.push(ctx_line.clone());
-        }
-        // Reset pending flag when we see a removal
-        if i + 1 < hunk.context.len() && removal_set.contains(&(i + 1)) {
-            pending_additions = true;
-        }
-    }
-    // Flush remaining additions
-    while add_idx < hunk.additions.len() {
-        replacement.push(hunk.additions[add_idx].clone());
-        add_idx += 1;
-    }
-
-    // Splice
-    let mut result = Vec::with_capacity(lines.len() + replacement.len());
+    let mut result = Vec::with_capacity(lines.len() + new.len());
     result.extend_from_slice(&lines[..match_pos]);
-    result.extend(replacement);
-    result.extend_from_slice(&lines[match_pos + hunk.context.len()..]);
+    result.extend(new);
+    result.extend_from_slice(&lines[match_pos + old.len()..]);
 
     Ok(result)
 }
