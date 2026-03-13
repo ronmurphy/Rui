@@ -6,6 +6,10 @@ use std::sync::Arc;
 
 use crate::output::OutputPanel;
 
+fn is_error_location(text: &str) -> bool {
+    text.trim().starts_with("--> ")
+}
+
 enum RunEvent {
     Stdout(String),
     Stderr(String),
@@ -300,6 +304,158 @@ impl RunManager {
                         break;
                     }
                 }
+            }
+        });
+    }
+
+    /// Run `cargo <args> --message-format=json` in `dir`.
+    /// Human-readable compiler output (from the `rendered` field) streams to the
+    /// output panel.  All raw JSON lines are collected and passed to `on_done`
+    /// so the caller can parse diagnostics.
+    pub fn run_in_dir_json(
+        &self,
+        dir: &Path,
+        cargo_args: &[&str],
+        output: &OutputPanel,
+        on_done: impl Fn(Vec<String>) + 'static,
+    ) {
+        self.stop_flag.store(false, Ordering::Relaxed);
+
+        let mut args: Vec<String> = cargo_args.iter().map(|s| s.to_string()).collect();
+        args.push("--message-format=json".to_string());
+        let cwd = dir.to_path_buf();
+
+        output.clear_run();
+        output.show_panel();
+        output.switch_to_run();
+        output.append_run_line(&format!("▶ cargo {}", cargo_args.join(" ")));
+
+        let stop_flag = self.stop_flag.clone();
+        let (tx, rx) = async_channel::unbounded::<RunEvent>();
+        // Extra channel for raw JSON lines
+        let (json_tx, json_rx) = async_channel::unbounded::<String>();
+
+        std::thread::spawn(move || {
+            let mut child = match Command::new("cargo")
+                .args(&args)
+                .current_dir(&cwd)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+            {
+                Ok(c) => c,
+                Err(e) => {
+                    let _ = tx.send_blocking(RunEvent::Stderr(format!("Failed to start cargo: {}", e)));
+                    let _ = tx.send_blocking(RunEvent::Done { success: false, exit_code: None });
+                    return;
+                }
+            };
+
+            let stderr_pipe = child.stderr.take();
+            let tx2 = tx.clone();
+            let flag2 = stop_flag.clone();
+            if let Some(err) = stderr_pipe {
+                std::thread::spawn(move || {
+                    for line in std::io::BufReader::new(err).lines() {
+                        if flag2.load(Ordering::Relaxed) { break; }
+                        if let Ok(l) = line { let _ = tx2.send_blocking(RunEvent::Stderr(l)); }
+                    }
+                });
+            }
+
+            if let Some(out) = child.stdout.take() {
+                for line in std::io::BufReader::new(out).lines() {
+                    if stop_flag.load(Ordering::Relaxed) { let _ = child.kill(); break; }
+                    if let Ok(l) = line {
+                        // Extract rendered text for the output panel
+                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&l) {
+                            if val["reason"].as_str() == Some("compiler-message") {
+                                if let Some(rendered) = val["message"]["rendered"].as_str() {
+                                    for rline in rendered.lines() {
+                                        let _ = tx.send_blocking(RunEvent::Stderr(rline.to_string()));
+                                    }
+                                }
+                            }
+                        }
+                        let _ = json_tx.send_blocking(l);
+                    }
+                }
+            }
+
+            let exit_code = child.wait().ok().and_then(|s| s.code());
+            let _ = tx.send_blocking(RunEvent::Done { success: exit_code == Some(0), exit_code });
+        });
+
+        let output = output.clone();
+        gtk4::glib::spawn_future_local(async move {
+            let mut json_lines: Vec<String> = Vec::new();
+            // Drain json channel
+            while let Ok(line) = json_rx.try_recv() {
+                json_lines.push(line);
+            }
+            while let Ok(ev) = rx.recv().await {
+                // Also drain any buffered json lines
+                while let Ok(line) = json_rx.try_recv() {
+                    json_lines.push(line);
+                }
+                match ev {
+                    RunEvent::Stdout(line) => output.append_run_line(&line),
+                    RunEvent::Stderr(line) => {
+                        if is_error_location(&line) || line.trim_start().starts_with("error") || line.trim_start().starts_with("warning") {
+                            output.append_run_error(&line);
+                        } else {
+                            output.append_run_line(&line);
+                        }
+                    }
+                    RunEvent::Done { success, exit_code } => {
+                        // Final drain
+                        while let Ok(line) = json_rx.try_recv() {
+                            json_lines.push(line);
+                        }
+                        let msg = match exit_code {
+                            Some(c) => format!("── Process exited with code {} ──", c),
+                            None    => "── Process terminated ──".to_string(),
+                        };
+                        if success {
+                            output.append_run_success(&msg);
+                        } else {
+                            output.append_run_error(&msg);
+                        }
+                        on_done(json_lines);
+                        break;
+                    }
+                }
+            }
+        });
+    }
+
+    /// Run `rustfmt --edition=2021 <path>` in a background thread.
+    /// Calls `on_done(Ok(()))` on success or `on_done(Err(msg))` on failure,
+    /// from the GTK main loop.
+    pub fn rustfmt_file(path: PathBuf, on_done: impl Fn(Result<(), String>) + 'static) {
+        let (tx, rx) = async_channel::bounded::<Result<(), String>>(1);
+        std::thread::spawn(move || {
+            let result = Command::new("rustfmt")
+                .arg("--edition=2021")
+                .arg(&path)
+                .output();
+            match result {
+                Ok(out) if out.status.success() => {
+                    let _ = tx.send_blocking(Ok(()));
+                }
+                Ok(out) => {
+                    let msg = String::from_utf8_lossy(&out.stderr).trim().to_string();
+                    let _ = tx.send_blocking(Err(msg));
+                }
+                Err(e) => {
+                    // rustfmt not installed — silently ignore
+                    log::debug!("rustfmt not available: {}", e);
+                }
+            }
+        });
+        gtk4::glib::spawn_future_local(async move {
+            if let Ok(result) = rx.recv().await {
+                on_done(result);
             }
         });
     }

@@ -111,7 +111,7 @@ Forked from rdm-editor, now its own project with its own identity.
 
 ---
 
-## File Inventory (27 source files)
+## File Inventory (31 source files)
 
 | File | Purpose |
 |------|---------|
@@ -145,6 +145,7 @@ Forked from rdm-editor, now its own project with its own identity.
 | `ai_provider.rs` | Multi-provider API backend (OpenAI / Anthropic / Gemini / compat) |
 | `ai_chat_panel.rs` | Native API-key AI chat panel with gear config popover |
 | `templates.rs` | Template library |
+| `node_view.rs` | Interactive widget relationship graph — parses `.ui` XML via roxmltree, renders widget↔handler signal edges as a node canvas with click-to-jump |
 
 ---
 

@@ -6,6 +6,7 @@ use gtk4::{
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::path::PathBuf;
+use crate::diagnostics::{Diagnostic, DiagLevel};
 
 /// Callback invoked when the user clicks an error location in the Run output.
 pub type ErrorClickCb = Rc<RefCell<Option<Box<dyn Fn(PathBuf, i32, i32)>>>>;
@@ -19,6 +20,10 @@ pub struct OutputPanel {
     run_view:    TextView,
     out_buf:     TextBuffer,
     prob_buf:    TextBuffer,
+    prob_view:   TextView,
+    prob_error_tag:   TextTag,
+    prob_warning_tag: TextTag,
+    prob_link_tag:    TextTag,
     error_tag:   TextTag,
     success_tag: TextTag,
     link_tag:    TextTag,
@@ -59,8 +64,28 @@ impl OutputPanel {
         run_buf.tag_table().add(&success_tag);
         run_buf.tag_table().add(&link_tag);
 
+        // Problems tab tags
+        let prob_error_tag = TextTag::builder()
+            .name("prob-error")
+            .foreground("#f38ba8")
+            .weight(700)
+            .build();
+        let prob_warning_tag = TextTag::builder()
+            .name("prob-warning")
+            .foreground("#f9e2af")
+            .weight(700)
+            .build();
+        let prob_link_tag = TextTag::builder()
+            .name("prob-link")
+            .foreground("#89b4fa")
+            .underline(gtk4::pango::Underline::Single)
+            .build();
+        prob_buf.tag_table().add(&prob_error_tag);
+        prob_buf.tag_table().add(&prob_warning_tag);
+        prob_buf.tag_table().add(&prob_link_tag);
+
         stack.add_titled(&wrap_scroll(out_view.clone()), Some("output"), "Output");
-        stack.add_titled(&wrap_scroll(prob_view), Some("problems"), "Problems");
+        stack.add_titled(&wrap_scroll(prob_view.clone()), Some("problems"), "Problems");
         stack.add_titled(&wrap_scroll(run_view.clone()), Some("run"), "Run");
 
         let switcher = gtk4::StackSwitcher::new();
@@ -120,39 +145,10 @@ impl OutputPanel {
         }
 
         // Wire click handler on the Run text view
-        {
-            let rv = run_view.clone();
-            let buf = run_buf.clone();
-            let cb = on_error_click.clone();
-            let gesture = gtk4::GestureClick::new();
-            gesture.set_button(1);
-            gesture.connect_released(move |_, _, x, y| {
-                let (bx, by) = rv.window_to_buffer_coords(
-                    gtk4::TextWindowType::Widget,
-                    x as i32,
-                    y as i32,
-                );
-                if let Some(iter) = rv.iter_at_location(bx, by) {
-                    if let Some(tag) = buf.tag_table().lookup("link") {
-                        if iter.has_tag(&tag) {
-                            let mut line_start = iter;
-                            line_start.set_line_offset(0);
-                            let mut line_end = iter;
-                            if !line_end.ends_line() {
-                                line_end.forward_to_line_end();
-                            }
-                            let line_text = buf.text(&line_start, &line_end, false).to_string();
-                            if let Some((path, line, col)) = parse_error_location(&line_text) {
-                                if let Some(ref f) = *cb.borrow() {
-                                    f(path, line, col);
-                                }
-                            }
-                        }
-                    }
-                }
-            });
-            run_view.add_controller(gesture);
-        }
+        wire_click_handler(&run_view, &run_buf, "link", &on_error_click);
+
+        // Wire click handler on the Problems text view
+        wire_click_handler(&prob_view, &prob_buf, "prob-link", &on_error_click);
 
         Self {
             widget: vbox,
@@ -161,6 +157,10 @@ impl OutputPanel {
             run_buf,
             out_buf,
             prob_buf,
+            prob_view,
+            prob_error_tag,
+            prob_warning_tag,
+            prob_link_tag,
             error_tag,
             success_tag,
             link_tag,
@@ -226,6 +226,32 @@ impl OutputPanel {
         self.prob_buf.set_text("");
     }
 
+    /// Populate the Problems tab from a list of parsed diagnostics.
+    /// Switches the stack to the Problems view.
+    pub fn set_diagnostics(&self, diags: &[Diagnostic]) {
+        self.prob_buf.set_text("");
+        if diags.is_empty() {
+            append_line(&self.prob_buf, "✓ No errors or warnings.", None::<&TextTag>);
+            self.stack.set_visible_child_name("problems");
+            return;
+        }
+        for d in diags {
+            let (prefix, tag) = match d.level {
+                DiagLevel::Error   => ("ERROR",   Some(&self.prob_error_tag)),
+                DiagLevel::Warning => ("WARNING", Some(&self.prob_warning_tag)),
+                DiagLevel::Note    => ("NOTE",    None),
+            };
+            append_line(&self.prob_buf, &format!("{}: {}", prefix, d.message), tag.map(|t| t as &TextTag));
+            let file_name = d.file.file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| d.file.to_string_lossy().into_owned());
+            let loc = format!("  --> {}:{}:{}", file_name, d.line_start, d.col_start);
+            append_line(&self.prob_buf, &loc, Some(&self.prob_link_tag as &TextTag));
+        }
+        self.stack.set_visible_child_name("problems");
+        self.widget.set_visible(true);
+    }
+
     pub fn show_panel(&self) {
         self.widget.set_visible(true);
     }
@@ -248,6 +274,31 @@ impl OutputPanel {
         // Do not place cursor! Scroll to mark instead.
         self.run_view.scroll_to_mark(&mark, 0.0, true, 0.0, 1.0);
     }
+}
+
+fn wire_click_handler(view: &TextView, buf: &TextBuffer, tag_name: &'static str, cb: &ErrorClickCb) {
+    let rv = view.clone();
+    let buf = buf.clone();
+    let cb = cb.clone();
+    let gesture = gtk4::GestureClick::new();
+    gesture.set_button(1);
+    gesture.connect_released(move |_, _, x, y| {
+        let (bx, by) = rv.window_to_buffer_coords(gtk4::TextWindowType::Widget, x as i32, y as i32);
+        if let Some(iter) = rv.iter_at_location(bx, by) {
+            if let Some(tag) = buf.tag_table().lookup(tag_name) {
+                if iter.has_tag(&tag) {
+                    let mut ls = iter; ls.set_line_offset(0);
+                    let mut le = iter;
+                    if !le.ends_line() { le.forward_to_line_end(); }
+                    let text = buf.text(&ls, &le, false).to_string();
+                    if let Some((path, line, col)) = parse_error_location(&text) {
+                        if let Some(ref f) = *cb.borrow() { f(path, line, col); }
+                    }
+                }
+            }
+        }
+    });
+    view.add_controller(gesture);
 }
 
 fn make_text_view() -> (TextView, TextBuffer) {

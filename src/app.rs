@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use crate::diff_tool;
+use crate::diagnostics;
 use crate::find::FindBar;
 use crate::goto;
 use crate::help;
@@ -59,6 +60,8 @@ struct AppState {
     history_applying: Rc<Cell<bool>>,
     /// Most-recently-used file/project list (persisted to mru.json).
     mru: crate::mru::Mru,
+    /// Last diagnostics from cargo check / clippy (for inline marks).
+    last_diagnostics: Rc<RefCell<Vec<crate::diagnostics::Diagnostic>>>,
     /// Dynamic gio::Menu backing the File → Recent Files submenu.
     recent_files_menu: gtk4::gio::Menu,
     /// Dynamic gio::Menu backing the File → Recent Projects submenu.
@@ -637,6 +640,7 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         history: Rc::new(RefCell::new(crate::history::DesignerHistory::new())),
         history_applying: Rc::new(Cell::new(false)),
         mru: crate::mru::Mru::load(),
+        last_diagnostics: Rc::new(RefCell::new(Vec::new())),
         recent_files_menu: recent_files_menu.clone(),
         recent_projects_menu: recent_projects_menu.clone(),
         main_paned: main_paned.clone(),
@@ -1327,9 +1331,31 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         menubar::connect_action(app, "save", move || {
             let s = st.borrow();
             if let Some(tab) = s.notebook.current_tab() {
-                if tab.path().is_some() {
+                if let Some(path) = tab.path() {
                     let _ = s.notebook.save_current();
                     validate_ui_tab(&tab, &s.output);
+                    // rustfmt on save for .rs files
+                    if path.extension().map(|e| e == "rs").unwrap_or(false) {
+                        let tab2   = tab.clone();
+                        let diags  = s.last_diagnostics.clone();
+                        crate::runner::RunManager::rustfmt_file(path, move |result| {
+                            if let Ok(()) = result {
+                                if let Ok(content) = std::fs::read_to_string(tab2.path().unwrap()) {
+                                    let buf = tab2.buffer();
+                                    let cursor_line = buf.iter_at_mark(&buf.get_insert()).line();
+                                    buf.set_text(&content);
+                                    buf.set_modified(false);
+                                    *tab2.modified.borrow_mut() = false;
+                                    if let Some(mut iter) = buf.iter_at_line(cursor_line) {
+                                        buf.place_cursor(&iter);
+                                    }
+                                    // Re-apply inline marks after format
+                                    let d = diags.borrow();
+                                    diagnostics::apply_to_tab(&tab2, &d);
+                                }
+                            }
+                        });
+                    }
                 } else {
                     drop(s);
                     let _ = gtk4::prelude::WidgetExt::activate_action(
@@ -1770,6 +1796,107 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         let st = state.clone();
         menubar::connect_action(app, "stop", move || {
             st.borrow().runner.stop();
+        });
+    }
+
+    // Run → Check
+    {
+        let st = state.clone();
+        menubar::connect_action(app, "check", move || {
+            let s = st.borrow();
+            for tab in s.notebook.all_tabs() {
+                if tab.path().is_some() && tab.is_modified() { let _ = tab.save(); }
+            }
+            let cargo_dir = s.project_dir.clone()
+                .filter(|pd| pd.join("Cargo.toml").exists())
+                .or_else(|| s.notebook.current_tab().and_then(|t| t.path()).and_then(|p| find_cargo_toml_dir(&p)));
+            let Some(cd) = cargo_dir else {
+                s.output.append_run_error("No Cargo.toml found — open a project first.");
+                s.output.show_panel();
+                return;
+            };
+            let notebook  = s.notebook.clone();
+            let output    = s.output.clone();
+            let last_diag = s.last_diagnostics.clone();
+            let cd2 = cd.clone();
+            s.runner.run_in_dir_json(&cd, &["check"], &s.output, move |json_lines| {
+                let diags = diagnostics::parse_cargo_json(&json_lines, &cd2);
+                *last_diag.borrow_mut() = diags.clone();
+                output.set_diagnostics(&diags);
+                for tab in notebook.all_tabs() {
+                    diagnostics::apply_to_tab(&tab, &diags);
+                }
+            });
+        });
+    }
+
+    // Run → Clippy
+    {
+        let st = state.clone();
+        menubar::connect_action(app, "clippy", move || {
+            let s = st.borrow();
+            for tab in s.notebook.all_tabs() {
+                if tab.path().is_some() && tab.is_modified() { let _ = tab.save(); }
+            }
+            let cargo_dir = s.project_dir.clone()
+                .filter(|pd| pd.join("Cargo.toml").exists())
+                .or_else(|| s.notebook.current_tab().and_then(|t| t.path()).and_then(|p| find_cargo_toml_dir(&p)));
+            let Some(cd) = cargo_dir else {
+                s.output.append_run_error("No Cargo.toml found — open a project first.");
+                s.output.show_panel();
+                return;
+            };
+            let notebook  = s.notebook.clone();
+            let output    = s.output.clone();
+            let last_diag = s.last_diagnostics.clone();
+            let cd2 = cd.clone();
+            s.runner.run_in_dir_json(&cd, &["clippy"], &s.output, move |json_lines| {
+                let diags = diagnostics::parse_cargo_json(&json_lines, &cd2);
+                *last_diag.borrow_mut() = diags.clone();
+                output.set_diagnostics(&diags);
+                for tab in notebook.all_tabs() {
+                    diagnostics::apply_to_tab(&tab, &diags);
+                }
+            });
+        });
+    }
+
+    // Run → Format File (manual rustfmt trigger)
+    {
+        let st = state.clone();
+        menubar::connect_action(app, "format-file", move || {
+            let s = st.borrow();
+            let Some(tab) = s.notebook.current_tab() else { return };
+            let Some(path) = tab.path() else {
+                s.output.append_run_error("Save the file before formatting.");
+                return;
+            };
+            if path.extension().map(|e| e != "rs").unwrap_or(true) {
+                s.output.append_run_line("Format File: only .rs files are supported.");
+                return;
+            }
+            if tab.is_modified() { let _ = tab.save(); }
+            let output = s.output.clone();
+            let diags  = s.last_diagnostics.clone();
+            crate::runner::RunManager::rustfmt_file(path, move |result| {
+                match result {
+                    Ok(()) => {
+                        if let Ok(content) = std::fs::read_to_string(tab.path().unwrap()) {
+                            let buf = tab.buffer();
+                            let cursor_line = buf.iter_at_mark(&buf.get_insert()).line();
+                            buf.set_text(&content);
+                            buf.set_modified(false);
+                            *tab.modified.borrow_mut() = false;
+                            if let Some(iter) = buf.iter_at_line(cursor_line) {
+                                buf.place_cursor(&iter);
+                            }
+                            diagnostics::apply_to_tab(&tab, &diags.borrow());
+                            output.append_run_success("✓ rustfmt applied.");
+                        }
+                    }
+                    Err(msg) => output.append_run_error(&format!("rustfmt: {}", msg)),
+                }
+            });
         });
     }
 

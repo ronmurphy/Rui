@@ -79,6 +79,9 @@ pub fn build(app: &Application) -> (Menu, Menu, Menu) {
     run_menu.append(Some("Build"),         Some("app.build"));
     run_menu.append(Some("Build Install"), Some("app.build-install"));
     run_menu.append(Some("Stop"),          Some("app.stop"));
+    run_menu.append(Some("Check"),         Some("app.check"));
+    run_menu.append(Some("Clippy"),        Some("app.clippy"));
+    run_menu.append(Some("Format File"),   Some("app.format-file"));
     run_menu.append(Some("Open in Browser"), Some("app.open-browser"));
     run_menu.append(Some("Generate All Handlers"), Some("app.generate-handlers"));
     run_menu.append(Some("Template Library…"), Some("app.template-library"));
@@ -115,7 +118,7 @@ pub fn build(app: &Application) -> (Menu, Menu, Menu) {
         "cut", "copy", "paste", "select-all", "find", "find-replace", "goto-line",
         "toggle-sidebar", "toggle-output", "toggle-canvas", "toggle-toolbox", "toggle-preview", "toggle-minimap",
         "layout-code", "layout-designer",
-        "run", "build", "build-install", "stop", "open-browser", "generate-handlers", "template-library",
+        "run", "build", "build-install", "stop", "check", "clippy", "format-file", "open-browser", "generate-handlers", "template-library",
         "ai-open", "claude-code-open", "api-chat-open", "ai-copy-file", "ai-copy-selection", "ai-apply-diff",
         "help", "about",
     ] {

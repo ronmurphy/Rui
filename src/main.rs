@@ -22,6 +22,7 @@ mod statusbar;
 mod tab;
 mod canvas;
 mod codegen;
+mod diagnostics;
 mod outline;
 mod palette;
 mod inspector;
