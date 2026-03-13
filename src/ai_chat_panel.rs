@@ -380,6 +380,10 @@ pub struct AiChatPanel {
     ctx_lbl:    Label,
     warn_lbl:   Label,
     file_switch: Switch,
+    /// True after files have been sent once; reset on clear or switch toggle-off.
+    files_sent:  Rc<Cell<bool>>,
+    /// Shared session history panel (optional — wired after construction).
+    history:     Rc<RefCell<Option<crate::chat_history::ChatHistoryPanel>>>,
 }
 
 impl AiChatPanel {
@@ -531,6 +535,8 @@ impl AiChatPanel {
             ctx_lbl:          ctx_lbl.clone(),
             warn_lbl:         warn_lbl.clone(),
             file_switch:      file_switch.clone(),
+            files_sent:       Rc::new(Cell::new(false)),
+            history:          Rc::new(RefCell::new(None)),
         };
 
         // Wire Send button
@@ -567,6 +573,14 @@ impl AiChatPanel {
             });
         }
 
+        // Reset files_sent when switch is turned off.
+        {
+            let p = panel.clone();
+            file_switch.connect_active_notify(move |sw| {
+                if !sw.is_active() { p.files_sent.set(false); }
+            });
+        }
+
         // Wire Gear button → settings popover
         {
             let p = panel.clone();
@@ -579,6 +593,10 @@ impl AiChatPanel {
     }
 
     // ── Callback registration ─────────────────────────────────────────────────
+
+    pub fn set_history(&self, h: crate::chat_history::ChatHistoryPanel) {
+        *self.history.borrow_mut() = Some(h);
+    }
 
     pub fn on_get_buffer<F: Fn() -> Option<String> + 'static>(&self, cb: F) {
         *self.get_buffer_cb.borrow_mut() = Some(Box::new(cb));
@@ -732,6 +750,7 @@ impl AiChatPanel {
         while let Some(child) = self.chat_box.first_child() {
             self.chat_box.remove(&child);
         }
+        self.files_sent.set(false);
         self.ctx_lbl.set_text("Includes .ui + companion .rs context");
         self.warn_lbl.set_visible(false);
     }
@@ -762,8 +781,8 @@ impl AiChatPanel {
         if text.is_empty() { return; }
         buf.set_text("");
 
-        // Gather context (only if file switch is on)
-        let send_files = self.file_switch.is_active();
+        // Gather context — only on first message per conversation (files_sent flag).
+        let send_files = self.file_switch.is_active() && !self.files_sent.get();
         let ui_content = send_files.then(|| self.get_buffer_cb.borrow().as_ref().and_then(|cb| cb())).flatten();
         let file_path  = send_files.then(|| self.get_path_cb.borrow().as_ref().and_then(|cb| cb())).flatten();
         let companion  = send_files.then(|| self.get_companion_cb.borrow().as_ref().and_then(|cb| cb())).flatten();
@@ -785,6 +804,9 @@ impl AiChatPanel {
             prompt.push_str("\n```\n\n");
         }
         prompt.push_str(&text);
+
+        // Mark files as sent so subsequent messages don't repeat the full file dump.
+        if send_files { self.files_sent.set(true); }
 
         self.add_message("user", &text);
         let (response_view, anim_stop) = self.add_streaming_placeholder();
@@ -1012,6 +1034,29 @@ impl AiChatPanel {
         let blocks = extract_code_blocks(text);
         if blocks.is_empty() { return; }
 
+        // Record every block in the session history panel.
+        if let Some(ref h) = *self.history.borrow() {
+            for block in &blocks {
+                let display_name = if matches!(block.lang.as_str(), "diff" | "patch") {
+                    extract_diff_filename(&block.code)
+                } else {
+                    extract_code_filename(&block.code, &block.lang)
+                        .or_else(|| {
+                            self.get_path_cb.borrow().as_ref().and_then(|cb| cb())
+                                .and_then(|p| {
+                                    if matches!(block.lang.as_str(), "rust" | "rs") {
+                                        std::path::Path::new(&p).with_extension("rs")
+                                            .file_name().and_then(|n| n.to_str()).map(|s| s.to_string())
+                                    } else {
+                                        std::path::Path::new(&p).file_name().and_then(|n| n.to_str()).map(|s| s.to_string())
+                                    }
+                                })
+                        })
+                };
+                h.add_entry("AI Chat", &block.lang, display_name, block.code.clone());
+            }
+        }
+
         for (i, block) in blocks.iter().enumerate() {
             let is_xml  = matches!(block.lang.as_str(), "xml" | "ui");
             let is_rust = matches!(block.lang.as_str(), "rust" | "rs");
@@ -1039,7 +1084,16 @@ impl AiChatPanel {
                 continue;
             }
 
-            let file_hint = extract_code_filename(&code, &block.lang);
+            let file_hint = extract_code_filename(&code, &block.lang).or_else(|| {
+                self.get_path_cb.borrow().as_ref().and_then(|cb| cb()).and_then(|p| {
+                    if is_rust {
+                        std::path::Path::new(&p).with_extension("rs")
+                            .file_name().and_then(|n| n.to_str()).map(|s| s.to_string())
+                    } else {
+                        std::path::Path::new(&p).file_name().and_then(|n| n.to_str()).map(|s| s.to_string())
+                    }
+                })
+            });
 
             let btn_label = if is_xml {
                 match file_hint {

@@ -77,6 +77,7 @@ struct AppState {
 
     claude_panel: ClaudeCodePanel,
     ai_chat_panel: AiChatPanel,
+    chat_history: crate::chat_history::ChatHistoryPanel,
 
     main_paned: Paned,
     vert_paned: Paned,
@@ -650,6 +651,10 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
 
     right_nb.append_page(&ai_box, Some(&Label::new(Some(" AI Chat "))));
 
+    // ── Session History tab ────────────────────────────────────────
+    let chat_history = crate::chat_history::ChatHistoryPanel::new();
+    right_nb.append_page(&chat_history.widget, Some(&Label::new(Some(" History "))));
+
     let right_paned = Paned::new(Orientation::Horizontal);
     right_paned.set_start_child(Some(&center_area));
     right_paned.set_end_child(Some(&right_nb));
@@ -676,39 +681,10 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
     main_paned.set_shrink_end_child(false);
     main_paned.set_position(230);
 
-    // Link panel widths: dragging either the left or right panel syncs the other.
-    {
-        use std::rc::Rc;
-        use std::cell::Cell;
-        let syncing = Rc::new(Cell::new(false));
-
-        // right_paned drag → update left_nb width
-        let mp = main_paned.clone();
-        let syncing2 = syncing.clone();
-        right_paned.connect_notify_local(Some("position"), move |rp, _| {
-            if syncing2.get() { return; }
-            let ai_width = rp.allocated_width() - rp.position();
-            if ai_width > 150 && ai_width < 900 {
-                syncing2.set(true);
-                mp.set_position(ai_width);
-                syncing2.set(false);
-            }
-        });
-
-        let rp2 = right_paned.clone();
-        let syncing3 = syncing.clone();
-        main_paned.connect_notify_local(Some("position"), move |mp, _| {
-            if syncing3.get() { return; }
-            let left_w = mp.position();
-            let total  = rp2.allocated_width();
-            let new_pos = total - left_w;
-            if left_w > 150 && left_w < 900 && new_pos > 200 {
-                syncing3.set(true);
-                rp2.set_position(new_pos);
-                syncing3.set(false);
-            }
-        });
-    }
+    // Lock left panel at fixed width — not user-resizable.
+    main_paned.connect_notify_local(Some("position"), move |mp, _| {
+        if mp.position() != 230 { mp.set_position(230); }
+    });
 
     let vert_paned = Paned::new(Orientation::Vertical);
     vert_paned.set_start_child(Some(&main_paned));
@@ -762,6 +738,7 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         ai_sidebar: ai_sidebar.clone(),
         claude_panel:   claude_panel.clone(),
         ai_chat_panel:  ai_chat_panel.clone(),
+        chat_history:   chat_history.clone(),
     }));
 
     // Populate MRU menus from saved state.
@@ -2542,6 +2519,55 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         let win = window.clone();
         let st = state.clone();
         ai_chat_panel.on_apply_diff(move |diff| {
+            let working_dir = st.borrow()
+                .notebook
+                .current_tab()
+                .and_then(|t| t.path())
+                .and_then(|p| p.parent().map(|d| d.to_path_buf()));
+            crate::diff_tool::show_diff_dialog_with_diff(&win, working_dir, diff);
+        });
+    }
+
+    // ── Wire session history panel ─────────────────────────────────────────
+    claude_panel.set_history(chat_history.clone());
+    ai_chat_panel.set_history(chat_history.clone());
+    {
+        let st = state.clone();
+        chat_history.on_apply_xml(move |code| {
+            let s = st.borrow();
+            if let Some(tab) = s.notebook.current_tab() {
+                tab.buffer().set_text(code);
+            }
+        });
+    }
+    {
+        let st = state.clone();
+        chat_history.on_apply_rs(move |code| {
+            let s = st.borrow();
+            let current_tab = s.notebook.current_tab();
+            let companion = current_tab.as_ref()
+                .and_then(|t| t.path())
+                .filter(|p| Canvas::is_ui_file(p))
+                .map(|p| crate::codegen::companion_path(&p));
+            if let Some(companion) = companion {
+                if let Err(e) = std::fs::write(&companion, code) {
+                    log::error!("Failed to write companion: {}", e);
+                    return;
+                }
+                s.notebook.open_file(&companion, &s.cfg);
+                if let Some(tab) = s.notebook.current_tab() {
+                    tab.buffer().set_text(code);
+                    tab.buffer().set_modified(false);
+                }
+            } else if let Some(tab) = current_tab {
+                tab.buffer().set_text(code);
+            }
+        });
+    }
+    {
+        let win = window.clone();
+        let st = state.clone();
+        chat_history.on_view_diff(move |diff| {
             let working_dir = st.borrow()
                 .notebook
                 .current_tab()

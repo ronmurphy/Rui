@@ -139,6 +139,28 @@ pub fn startup_dir(cfg: &EditorConfig) -> PathBuf {
 pub fn default_css() -> String {
     r#"
 /* Rui structural styles — no hardcoded colours */
+
+/* ── Keyframe animations ──────────────────────────────────────────────── */
+@keyframes rui-fade-in {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+}
+@keyframes rui-pulse-selected {
+    0%   { outline-color: #3584e4; }
+    50%  { outline-color: alpha(#3584e4, 0.35); }
+    100% { outline-color: #3584e4; }
+}
+@keyframes rui-drop-flash {
+    0%   { background-color: alpha(#2ec27e, 0.50); }
+    60%  { background-color: alpha(#2ec27e, 0.18); }
+    100% { background-color: transparent; }
+}
+@keyframes rui-drop-hover-pulse {
+    0%   { opacity: 1.0; }
+    50%  { opacity: 0.55; }
+    100% { opacity: 1.0; }
+}
+
 .editor-tab-label {
     padding: 4px 8px;
 }
@@ -174,9 +196,10 @@ pub fn default_css() -> String {
 }
 .designer-board {
     background-color: @theme_bg_color;
-    box-shadow: 0 4px 18px 0 rgba(0, 0, 0, 0.3);
+    box-shadow: 0 6px 24px 0 rgba(0, 0, 0, 0.28);
     border-radius: 8px;
-    border: 1px solid alpha(currentColor, 0.15);
+    border: 1px solid alpha(currentColor, 0.12);
+    animation: rui-fade-in 180ms ease-out;
 }
 .editor-help-title {
     font-size: 1.4em;
@@ -187,13 +210,20 @@ pub fn default_css() -> String {
     outline: 2px solid #3584e4;
     outline-offset: 1px;
     border-radius: 4px;
+    animation: rui-pulse-selected 1.8s ease-in-out infinite;
 }
 .drag-active {
     opacity: 0.4;
+    transition: opacity 150ms ease;
 }
 .drop-hover {
     outline: 2px dashed alpha(currentColor, 0.6);
     outline-offset: 2px;
+    border-radius: 4px;
+    animation: rui-drop-hover-pulse 800ms ease-in-out infinite;
+}
+.widget-just-dropped {
+    animation: rui-drop-flash 520ms ease-out forwards;
     border-radius: 4px;
 }
 /* Tree-panel selection highlight — green outline */
@@ -210,6 +240,8 @@ button.toolbar-icon {
     padding: 2px 4px;
     min-height: 24px;
     min-width: 28px;
+    border-radius: 6px;
+    transition: background-color 120ms ease;
 }
 /* Toolbar combo-button popover entries */
 .toolbar-popup {
@@ -225,9 +257,22 @@ button.toolbar-icon {
 }
 .toolbar-popup button:hover {
     background-color: alpha(@view_fg_color, 0.1);
+    transition: background-color 100ms ease;
 }
 .toolbar-popup label {
     color: @view_fg_color;
+}
+
+/* ── Help quick-reference popover ─────────────────────────────────────── */
+.help-shortcut-key {
+    font-family: monospace;
+    font-size: 0.85em;
+    min-width: 160px;
+}
+button.help-btn {
+    font-weight: bold;
+    font-size: 1.0em;
+    min-width: 26px;
 }
 
 /* ── AI Chat panels ─────────────────────────────────────── */
