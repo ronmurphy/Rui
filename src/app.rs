@@ -890,7 +890,11 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         let node_view_ref = node_view.clone();
         center_nb.connect_switch_page(move |_, _, page| {
             if page == 0 {
-                if let Some(canvas) = st.borrow().canvas_reg.active() {
+                // Use get_nth on design_nb to get the correct canvas —
+                // active() uses current_page() which may lag in the signal handler.
+                let s = st.borrow();
+                let design_page = s.design_nb.current_page().unwrap_or(0);
+                if let Some(canvas) = s.canvas_reg.get_nth(design_page) {
                     canvas.render_from_buffer();
                 }
             }
@@ -899,11 +903,13 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
     }
 
     // ── design_nb switch: re-wire toolbox/inspector to new active canvas ──────
+    // Use the `page` parameter directly — current_page() may lag behind during
+    // the switch-page signal, causing active() to return the old canvas.
     {
         let st = state.clone();
-        design_nb.connect_switch_page(move |_, _, _page| {
+        design_nb.connect_switch_page(move |_, _, page| {
             let s = st.borrow();
-            if let Some(canvas) = s.canvas_reg.active() {
+            if let Some(canvas) = s.canvas_reg.get_nth(page) {
                 if let Some(buf) = canvas.current_buffer() {
                     s.toolbox.connect_buffer(&buf);
                     s.outline.connect_buffer(&buf);

@@ -2519,6 +2519,13 @@ impl CanvasRegistry {
         self.entries.borrow().get(page).map(|(_, c)| c.clone())
     }
 
+    /// Return the canvas at a specific design-notebook page index.
+    /// Use this in `switch-page` signal handlers instead of `active()` because
+    /// `current_page()` may not yet reflect the new page when the signal fires.
+    pub fn get_nth(&self, page: u32) -> Option<Canvas> {
+        self.entries.borrow().get(page as usize).map(|(_, c)| c.clone())
+    }
+
     /// Switch design tab to the canvas for `path` if it exists.
     pub fn switch_to(&self, path: &std::path::Path) {
         let pos = self.entries.borrow().iter().position(|(p, _)| p == path);
