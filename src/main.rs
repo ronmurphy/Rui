@@ -44,6 +44,7 @@ mod chat_history;
 mod strreplace;
 mod node_view;
 mod lsp_client;
+mod css_bank;
 
 fn main() {
     env_logger::init();

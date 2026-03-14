@@ -1,0 +1,4 @@
+.game-board {
+    background-color: #2d6a4f;
+    background-image: radial-gradient(ellipse at 30% 30%, #3a8a63 0%, #2d6a4f 60%, #1e4d38 100%);
+}

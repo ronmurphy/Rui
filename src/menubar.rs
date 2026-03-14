@@ -86,6 +86,7 @@ pub fn build(app: &Application) -> (Menu, Menu, Menu) {
     run_menu.append(Some("Open in Browser"), Some("app.open-browser"));
     run_menu.append(Some("Generate All Handlers"), Some("app.generate-handlers"));
     run_menu.append(Some("Template Library…"), Some("app.template-library"));
+    run_menu.append(Some("CSS Bank…"),         Some("app.css-bank"));
 
     let run_item = MenuItem::new(Some("Run"), None);
     run_item.set_submenu(Some(&run_menu));
@@ -119,7 +120,7 @@ pub fn build(app: &Application) -> (Menu, Menu, Menu) {
         "cut", "copy", "paste", "select-all", "find", "find-replace", "search-in-files", "goto-line", "goto-definition",
         "toggle-sidebar", "toggle-output", "toggle-canvas", "toggle-toolbox", "toggle-preview", "toggle-minimap",
         "layout-code", "layout-designer",
-        "run", "build", "build-install", "stop", "check", "clippy", "format-file", "open-browser", "generate-handlers", "template-library",
+        "run", "build", "build-install", "stop", "check", "clippy", "format-file", "open-browser", "generate-handlers", "template-library", "css-bank",
         "ai-open", "claude-code-open", "api-chat-open", "ai-copy-file", "ai-copy-selection", "ai-apply-diff",
         "help", "about",
     ] {

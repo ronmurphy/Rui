@@ -53,6 +53,33 @@ impl NotebookManager {
         *self.on_modified.borrow_mut() = Some(Box::new(cb));
     }
 
+    /// Open a .ui file and also its sibling style.css if one exists.
+    /// Safe to call on any file — CSS auto-open only triggers for .ui files.
+    pub fn open_file_with_css(&self, path: &Path, cfg: &EditorConfig) {
+        self.open_file(path, cfg);
+        if path.extension().map(|e| e == "ui").unwrap_or(false) {
+            if let Some(dir) = path.parent() {
+                let css_path = dir.join("style.css");
+                if css_path.exists() {
+                    self.open_file(&css_path, cfg);
+                    // Return focus to the .ui tab
+                    self.open_file(path, cfg);
+                }
+            }
+        }
+    }
+
+    /// Close a tab by file path (no-op if not open).
+    pub fn close_file(&self, path: &Path) {
+        let idx = {
+            let tabs = self.tabs.borrow();
+            tabs.iter().position(|t| t.path().as_deref() == Some(path))
+        };
+        if let Some(idx) = idx {
+            self.close_tab(idx);
+        }
+    }
+
     pub fn open_file(&self, path: &Path, cfg: &EditorConfig) {
         let already = {
             let tabs = self.tabs.borrow();
@@ -215,12 +242,24 @@ impl NotebookManager {
         let tabs_rc = self.tabs.clone();
         let notebook = self.widget.clone();
         let scroll = tab.scroll.clone();
+        let tab_path = tab.path();
+        let nb_clone = self.clone();
         close_btn.connect_clicked(move |_| {
             if let Some(page_num) = notebook.page_num(&scroll) {
                 notebook.remove_page(Some(page_num));
-                let mut tabs = tabs_rc.borrow_mut();
-                if (page_num as usize) < tabs.len() {
-                    tabs.remove(page_num as usize);
+                {
+                    let mut tabs = tabs_rc.borrow_mut();
+                    if (page_num as usize) < tabs.len() {
+                        tabs.remove(page_num as usize);
+                    }
+                }
+                // If this was a .ui tab, also close its sibling style.css
+                if let Some(ref p) = tab_path {
+                    if p.extension().map(|e| e == "ui").unwrap_or(false) {
+                        if let Some(dir) = p.parent() {
+                            nb_clone.close_file(&dir.join("style.css"));
+                        }
+                    }
                 }
             }
         });

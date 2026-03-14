@@ -2,23 +2,36 @@
 <interface>
 <requires lib="gtk" version="4.0"/>
 <object class="GtkGrid" id="main_grid">
-<property name="row-spacing">8</property>
-<property name="column-spacing">8</property>
-<property name="margin-start">12</property>
-<property name="margin-end">12</property>
-<property name="margin-top">12</property>
-<property name="margin-bottom">12</property>
 <property name="hexpand">true</property>
 <property name="vexpand">true</property>
-<property name="rui-rows">9</property>
-<property name="rui-columns">10</property>
+<property name="row-spacing">0</property>
+<property name="column-spacing">0</property>
+<property name="margin-start">0</property>
+<property name="margin-end">0</property>
+<property name="margin-top">0</property>
+<property name="margin-bottom">0</property>
     <child>
 <object class="GtkHeaderBar" id="header_bar">
         <property name="hexpand">true</property>
 <layout>
 <property name="column">0</property>
 <property name="row">0</property>
-<property name="column-span">10</property>
+<property name="column-span">7</property>
+<property name="row-span">1</property>
+</layout>
+</object>
+</child>
+    <child>
+<object class="GtkFixed" id="game_board">
+        <property name="hexpand">true</property>
+        <property name="vexpand">true</property>
+        <property name="width-request">800</property>
+        <property name="height-request">610</property>
+        <style><class name="game-board"/></style>
+<layout>
+<property name="column">0</property>
+<property name="row">1</property>
+<property name="column-span">7</property>
 <property name="row-span">1</property>
 </layout>
 </object>

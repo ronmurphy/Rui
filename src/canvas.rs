@@ -102,6 +102,8 @@ pub struct Canvas {
     last_xml: Rc<RefCell<String>>,
     /// Target window dimensions hint (from project main.rs). (0,0) = use natural size.
     window_hint: Rc<Cell<(i32, i32)>>,
+    /// Project-specific CSS loaded from a style.css alongside the .ui file.
+    project_css: gtk4::CssProvider,
 }
 
 impl Canvas {
@@ -138,6 +140,16 @@ impl Canvas {
             );
         }
         container.add_css_class("canvas-zoom-host");
+
+        // ── Project CSS provider (loaded from style.css next to .ui) ──
+        let project_css = gtk4::CssProvider::new();
+        if let Some(display) = gtk4::gdk::Display::default() {
+            gtk4::style_context_add_provider_for_display(
+                &display,
+                &project_css,
+                gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+            );
+        }
 
         // ── Middle-click pan ──────────────────────────────────────────
         let pan = GestureDrag::new();
@@ -209,6 +221,7 @@ impl Canvas {
             zoom_css,
             last_xml: Rc::new(RefCell::new(String::new())),
             window_hint: Rc::new(Cell::new((0, 0))),
+            project_css,
         }
     }
 
@@ -417,6 +430,12 @@ impl Canvas {
     /// Pass (0, 0) to reset to natural size.
     pub fn set_window_hint(&self, width: i32, height: i32) {
         self.window_hint.set((width, height));
+    }
+
+    /// Load project-specific CSS (from style.css alongside the .ui file).
+    /// Pass an empty string to clear.
+    pub fn set_project_css(&self, css: &str) {
+        self.project_css.load_from_data(css);
     }
 
     /// Connect to a sourceview5 Buffer so the preview auto-updates

@@ -631,6 +631,7 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
     
     master_toolbar.append(&make_tool_btn("\u{f013}", "Generate Handlers", "app.generate-handlers"));
     master_toolbar.append(&make_tool_btn("\u{f02d}", "Template Library", "app.template-library"));
+    master_toolbar.append(&make_tool_btn("\u{f53f}", "CSS Bank", "app.css-bank"));
     
     let sep3 = gtk4::Separator::new(Orientation::Vertical);
     sep3.set_margin_start(4); sep3.set_margin_end(4);
@@ -1002,6 +1003,11 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
                     if let Some((w, h)) = parse_window_size(&path) {
                         s.canvas.set_window_hint(w, h);
                     }
+                    if let Some(dir) = path.parent() {
+                        let css_path = dir.join("style.css");
+                        let css = std::fs::read_to_string(&css_path).unwrap_or_default();
+                        s.canvas.set_project_css(&css);
+                    }
                     s.canvas.connect_buffer(&tab.buffer());
                     s.toolbox.connect_buffer(&tab.buffer());
                     s.outline.connect_buffer(&tab.buffer());
@@ -1062,7 +1068,7 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         let st = state.clone();
         sidebar.on_open(move |path| {
             let s = st.borrow();
-            s.notebook.open_file(&path, &s.cfg);
+            s.notebook.open_file_with_css(&path, &s.cfg);
             // Always update toolbox buffer
             if let Some(tab) = s.notebook.current_tab() {
                 s.toolbox.set_buffer(&tab.buffer());
@@ -1072,6 +1078,11 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
                 if let Some(tab) = s.notebook.current_tab() {
                     if let Some((w, h)) = parse_window_size(&path) {
                         s.canvas.set_window_hint(w, h);
+                    }
+                    if let Some(dir) = path.parent() {
+                        let css_path = dir.join("style.css");
+                        let css = std::fs::read_to_string(&css_path).unwrap_or_default();
+                        s.canvas.set_project_css(&css);
                     }
                     s.canvas.connect_buffer(&tab.buffer());
                     s.toolbox.connect_buffer(&tab.buffer());
@@ -1238,7 +1249,7 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
                             s.sidebar.set_root(&dir);
 
                             let ui_path = dir.join("layout.ui");
-                            s.notebook.open_file(&ui_path, &s.cfg);
+                            s.notebook.open_file_with_css(&ui_path, &s.cfg);
 
                             if let Some(tab) = s.notebook.current_tab() {
                                 s.toolbox.set_buffer(&tab.buffer());
@@ -1351,7 +1362,7 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
                             // Auto-open layout.ui if it exists
                             let ui_path = dir.join("layout.ui");
                             if ui_path.exists() {
-                                s.notebook.open_file(&ui_path, &s.cfg);
+                                s.notebook.open_file_with_css(&ui_path, &s.cfg);
                                 if let Some(tab) = s.notebook.current_tab() {
                                     s.toolbox.set_buffer(&tab.buffer());
                                     s.canvas.connect_buffer(&tab.buffer());
@@ -2355,6 +2366,16 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         menubar::connect_action(app, "template-library", move || {
             let s = st.borrow();
             crate::codegen::show_template_library(&win, &s.notebook, &s.cfg);
+        });
+    }
+
+    // Run → CSS Bank
+    {
+        let st = state.clone();
+        let win = window.clone();
+        menubar::connect_action(app, "css-bank", move || {
+            let s = st.borrow();
+            crate::css_bank::show_css_bank(&win, &s.notebook);
         });
     }
 

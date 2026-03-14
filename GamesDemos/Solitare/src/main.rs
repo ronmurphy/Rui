@@ -23,18 +23,13 @@ fn main() {
             .join("\n");
         let builder = gtk4::Builder::from_string(&ui_clean);
 
-        layout_app::connect_handlers(&builder);
-
         let window = gtk4::ApplicationWindow::builder()
             .application(app)
-            .title("Solitare")
+            .title("Solitaire")
             .default_width(800)
-            .default_height(600)
+            .default_height(660)
             .build();
 
-        if let Some(root) = builder.object::<gtk4::Widget>("main_grid") {
-            window.set_child(Some(&root));
-        }
         // Wire HeaderBar as window titlebar (CSD — no double title bar)
         if let Some(hb) = builder.object::<gtk4::HeaderBar>("header_bar") {
             // Unparent from grid first — a widget can only have one parent
@@ -45,6 +40,12 @@ fn main() {
                 grid.set_margin_top(0);
                 grid.set_row_spacing(0);
             }
+        }
+
+        layout_app::connect_handlers(&builder, &window);
+
+        if let Some(root) = builder.object::<gtk4::Widget>("main_grid") {
+            window.set_child(Some(&root));
         }
 
         window.present();
