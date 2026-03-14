@@ -13,6 +13,7 @@ pub struct NotebookManager {
     tabs: Rc<RefCell<Vec<EditorTab>>>,
     on_switch: Rc<RefCell<Option<Box<dyn Fn(usize, &EditorTab)>>>>,
     on_modified: Rc<RefCell<Option<Box<dyn Fn(usize, bool)>>>>,
+    on_close: Rc<RefCell<Option<Box<dyn Fn(&std::path::Path)>>>>,
 }
 
 impl NotebookManager {
@@ -29,6 +30,7 @@ impl NotebookManager {
             tabs: Rc::new(RefCell::new(Vec::new())),
             on_switch: Rc::new(RefCell::new(None)),
             on_modified: Rc::new(RefCell::new(None)),
+            on_close: Rc::new(RefCell::new(None)),
         };
 
         let tabs = mgr.tabs.clone();
@@ -51,6 +53,11 @@ impl NotebookManager {
 
     pub fn on_modified<F: Fn(usize, bool) + 'static>(&self, cb: F) {
         *self.on_modified.borrow_mut() = Some(Box::new(cb));
+    }
+
+    /// Called when a tab is closed, with the closed file's path (if any).
+    pub fn on_close<F: Fn(&std::path::Path) + 'static>(&self, cb: F) {
+        *self.on_close.borrow_mut() = Some(Box::new(cb));
     }
 
     /// Open a .ui file and also its sibling style.css if one exists.
@@ -244,6 +251,7 @@ impl NotebookManager {
         let scroll = tab.scroll.clone();
         let tab_path = tab.path();
         let nb_clone = self.clone();
+        let on_close_rc = self.on_close.clone();
         close_btn.connect_clicked(move |_| {
             if let Some(page_num) = notebook.page_num(&scroll) {
                 notebook.remove_page(Some(page_num));
@@ -253,8 +261,12 @@ impl NotebookManager {
                         tabs.remove(page_num as usize);
                     }
                 }
-                // If this was a .ui tab, also close its sibling style.css
                 if let Some(ref p) = tab_path {
+                    // Fire on_close callback (lets app.rs remove the canvas)
+                    if let Some(cb) = on_close_rc.borrow().as_ref() {
+                        cb(p);
+                    }
+                    // If this was a .ui tab, also close its sibling style.css
                     if p.extension().map(|e| e == "ui").unwrap_or(false) {
                         if let Some(dir) = p.parent() {
                             nb_clone.close_file(&dir.join("style.css"));

@@ -438,6 +438,11 @@ impl Canvas {
         self.project_css.load_from_data(css);
     }
 
+    /// Return the buffer currently connected to this canvas (if any).
+    pub fn current_buffer(&self) -> Option<sourceview5::Buffer> {
+        self.source_buffer.borrow().clone()
+    }
+
     /// Connect to a sourceview5 Buffer so the preview auto-updates
     /// whenever the text changes (debounced via generation counter).
     pub fn connect_buffer(&self, buffer: &sourceview5::Buffer) {
@@ -2413,4 +2418,133 @@ fn apply_merge(canvas: &Canvas) {
     canvas.merge_btn.set_active(false);
     canvas.merge_checked.borrow_mut().clear();
     canvas.apply_btn.set_sensitive(false);
+}
+
+// ── CanvasRegistry ────────────────────────────────────────────────────────────
+
+/// Manages one [`Canvas`] per open .ui file.
+/// `widget` is a `GtkNotebook` — use it as the Design page of `center_nb`.
+/// Interior mutability on `entries` allows all mutating methods to take `&self`,
+/// so callers can hold an immutable `AppState` borrow while creating/removing
+/// canvases without re-entrant RefCell panics from synchronous GTK signals.
+pub struct CanvasRegistry {
+    entries: std::rc::Rc<std::cell::RefCell<Vec<(std::path::PathBuf, Canvas)>>>,
+    /// The design-tab notebook (one tab per .ui file).
+    pub widget: Notebook,
+    /// Called once for each newly created Canvas after `init_merge_toolbar`/`init_zoom`.
+    init_fn: Option<std::rc::Rc<dyn Fn(&Canvas)>>,
+}
+
+impl CanvasRegistry {
+    pub fn new() -> Self {
+        let widget = Notebook::new();
+        widget.set_show_border(false);
+        widget.set_scrollable(true);
+        widget.set_hexpand(true);
+        widget.set_vexpand(true);
+        widget.set_show_tabs(false); // hidden until a second .ui is open
+        Self {
+            entries: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
+            widget,
+            init_fn: None,
+        }
+    }
+
+    /// Register a one-time init callback fired for every newly created Canvas.
+    pub fn set_init_fn<F: Fn(&Canvas) + 'static>(&mut self, f: F) {
+        self.init_fn = Some(std::rc::Rc::new(f));
+    }
+
+    /// Return (or create) the Canvas for `path`; switches design tab to it.
+    pub fn get_or_create(&self, path: &std::path::Path) -> Canvas {
+        let pos = self.entries.borrow().iter().position(|(p, _)| p == path);
+        if let Some(pos) = pos {
+            self.widget.set_current_page(Some(pos as u32));
+            return self.entries.borrow()[pos].1.clone();
+        }
+        let canvas = Canvas::new();
+        canvas.widget.set_hexpand(true);
+        canvas.widget.set_vexpand(true);
+        canvas.init_merge_toolbar();
+        canvas.init_zoom();
+        if let Some(ref f) = self.init_fn {
+            f(&canvas);
+        }
+        let filename = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("layout.ui")
+            .to_owned();
+        let tab_hbox = GtkBox::new(Orientation::Horizontal, 2);
+        let title_lbl = Label::new(Some(&filename));
+        title_lbl.add_css_class("editor-tab-label");
+        tab_hbox.append(&title_lbl);
+        let close_btn = Button::with_label("×");
+        close_btn.add_css_class("editor-tab-close");
+        close_btn.set_tooltip_text(Some("Close canvas"));
+        let entries_rc = self.entries.clone();
+        let nb = self.widget.clone();
+        let canvas_widget = canvas.widget.clone();
+        close_btn.connect_clicked(move |_| {
+            if let Some(page_num) = nb.page_num(&canvas_widget) {
+                { entries_rc.borrow_mut().remove(page_num as usize); }
+                nb.remove_page(Some(page_num));
+                nb.set_show_tabs(entries_rc.borrow().len() > 1);
+            }
+        });
+        tab_hbox.append(&close_btn);
+        tab_hbox.show();
+        self.widget.append_page(&canvas.widget, Some(&tab_hbox));
+        let page = {
+            let mut e = self.entries.borrow_mut();
+            let page = e.len() as u32;
+            e.push((path.to_path_buf(), canvas.clone()));
+            page
+        };
+        self.widget.set_current_page(Some(page));
+        self.widget.set_show_tabs(self.entries.borrow().len() > 1);
+        canvas
+    }
+
+    /// Return the Canvas for `path` if it already exists (no creation).
+    pub fn get(&self, path: &std::path::Path) -> Option<Canvas> {
+        self.entries.borrow().iter()
+            .find(|(p, _)| p == path)
+            .map(|(_, c)| c.clone())
+    }
+
+    /// Return the currently active Canvas (current design tab).
+    pub fn active(&self) -> Option<Canvas> {
+        let page = self.widget.current_page()? as usize;
+        self.entries.borrow().get(page).map(|(_, c)| c.clone())
+    }
+
+    /// Switch design tab to the canvas for `path` if it exists.
+    pub fn switch_to(&self, path: &std::path::Path) {
+        let pos = self.entries.borrow().iter().position(|(p, _)| p == path);
+        if let Some(pos) = pos {
+            self.widget.set_current_page(Some(pos as u32));
+        }
+    }
+
+    /// Remove the canvas for `path` (called when its code tab closes).
+    pub fn remove(&self, path: &std::path::Path) {
+        let pos = self.entries.borrow().iter().position(|(p, _)| p == path);
+        if let Some(pos) = pos {
+            // Drop borrow_mut BEFORE remove_page fires synchronous GTK signals.
+            { self.entries.borrow_mut().remove(pos); }
+            self.widget.remove_page(Some(pos as u32));
+            self.widget.set_show_tabs(self.entries.borrow().len() > 1);
+        }
+    }
+
+    /// Remove all canvases — call this when switching projects.
+    pub fn clear_all(&self) {
+        // Drop borrow_mut BEFORE remove_page fires synchronous GTK signals.
+        { self.entries.borrow_mut().clear(); }
+        while self.widget.n_pages() > 0 {
+            self.widget.remove_page(Some(0));
+        }
+        self.widget.set_show_tabs(false);
+    }
 }

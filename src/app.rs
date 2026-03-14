@@ -15,7 +15,7 @@ use crate::find::FindBar;
 use crate::goto;
 use crate::help;
 use crate::menubar;
-use crate::canvas::Canvas;
+use crate::canvas::{Canvas, CanvasRegistry};
 use crate::claude_code::ClaudeCodePanel;
 use crate::ai_chat_panel::AiChatPanel;
 use crate::outline::OutlinePanel;
@@ -44,7 +44,8 @@ struct AppState {
     runner:    RunManager,
     find_bar:  FindBar,
     cfg:       EditorConfig,
-    canvas:    Canvas,
+    canvas_reg: CanvasRegistry,
+    design_nb:  GtkNotebook,
     toolbox:   Toolbox,
     outline:   OutlinePanel,
     node_view: NodeView,
@@ -394,16 +395,8 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
     let statusbar  = StatusBar::new();
     let runner     = RunManager::new();
     let find_bar   = FindBar::new();
-    let canvas     = Canvas::new();
-    canvas.init_merge_toolbar();
-    canvas.init_zoom();
-    {
-        let out = output.clone();
-        canvas.on_xml_error(move |msg| {
-            out.append_run_error(&format!("[Canvas] {}", msg));
-            out.show_panel();
-        });
-    }
+    let canvas_reg = CanvasRegistry::new();
+    let design_nb  = canvas_reg.widget.clone();
     let toolbox    = Toolbox::new();
     let outline    = OutlinePanel::new();
 
@@ -476,23 +469,15 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
     center_nb.set_show_tabs(false);
     center_nb.set_hexpand(true);
     center_nb.set_vexpand(true);
-    canvas.widget.set_hexpand(true);
-    canvas.widget.set_vexpand(true);
+    design_nb.set_hexpand(true);
+    design_nb.set_vexpand(true);
     node_view.widget.set_hexpand(true);
     node_view.widget.set_vexpand(true);
-    center_nb.append_page(&canvas.widget,      Some(&Label::new(Some("  Design  "))));
+    center_nb.append_page(&design_nb,          Some(&Label::new(Some("  Design  "))));
     center_nb.append_page(&editor_col,         Some(&Label::new(Some("  Code  "))));
     center_nb.append_page(&node_view.widget,   Some(&Label::new(Some("  Nodes  "))));
 
-    // Re-render canvas when switching to Design; refresh node graph for Nodes.
-    {
-        let canvas_ref    = canvas.clone();
-        let node_view_ref = node_view.clone();
-        center_nb.connect_switch_page(move |_, _, page| {
-            if page == 0 { canvas_ref.render_from_buffer(); }
-            if page == 2 { node_view_ref.refresh(); }
-        });
-    }
+    // center_nb.connect_switch_page is wired after state construction (needs canvas_reg)
 
     // Each toggle button only acts when it becomes *active* (radio semantics).
     {
@@ -785,7 +770,8 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         runner:    runner.clone(),
         find_bar:  find_bar.clone(),
         cfg:       cfg.clone(),
-        canvas:    canvas.clone(),
+        canvas_reg: canvas_reg,
+        design_nb:  design_nb.clone(),
         toolbox:   toolbox.clone(),
         outline:   outline.clone(),
         node_view: node_view.clone(),
@@ -821,11 +807,120 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         rebuild_mru_menus(&s.mru, &s.recent_files_menu, &s.recent_projects_menu);
     }
 
-    // Wire Tree panel row-click → green canvas highlight.
+    // Wire Tree panel row-click → green canvas highlight on active canvas.
     {
-        let canvas_ref = canvas.clone();
+        let st = state.clone();
         outline.on_row_select(move |byte_offset| {
-            canvas_ref.select_from_tree(byte_offset);
+            if let Some(canvas) = st.borrow().canvas_reg.active() {
+                canvas.select_from_tree(byte_offset);
+            }
+        });
+    }
+
+    // ── Per-canvas init: on_xml_error, on_widget_select, set_on_double_click ──
+    {
+        let out = output.clone();
+        let palette_ref = toolbox.palette.clone();
+        let st = state.clone();
+        state.borrow_mut().canvas_reg.set_init_fn(move |canvas| {
+            let out2 = out.clone();
+            canvas.on_xml_error(move |msg| {
+                out2.append_run_error(&format!("[Canvas] {}", msg));
+                out2.show_panel();
+            });
+            let p = palette_ref.clone();
+            canvas.on_widget_select(move |byte_offset, grid_cell| {
+                p.set_insert_target(byte_offset, grid_cell);
+            });
+            let st2 = st.clone();
+            canvas.set_on_double_click(move |class, id| {
+                if !crate::codegen::has_signal(class) { return; }
+                let s = st2.borrow();
+                let ui_path = match s.notebook.current_tab().and_then(|t| t.path()) {
+                    Some(p) if Canvas::is_ui_file(&p) => p,
+                    _ => return,
+                };
+                let xml = match s.notebook.current_tab() {
+                    Some(tab) => {
+                        let (start, end) = tab.buffer().bounds();
+                        tab.buffer().text(&start, &end, false).to_string()
+                    }
+                    None => return,
+                };
+                let companion = crate::codegen::companion_path(&ui_path);
+                let existing = std::fs::read_to_string(&companion).unwrap_or_default();
+                let ui_filename = ui_path.file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                let new_content = if existing.is_empty() {
+                    crate::codegen::generate_all_handlers(&xml, &ui_filename)
+                } else {
+                    crate::codegen::merge_handlers(&existing, &xml, &ui_filename)
+                };
+                if let Err(e) = std::fs::write(&companion, &new_content) {
+                    log::error!("Failed to write companion file: {}", e);
+                    return;
+                }
+                drop(s);
+                let s2 = st2.borrow();
+                s2.notebook.open_file(&companion, &s2.cfg);
+                if let Some(tab) = s2.notebook.current_tab() {
+                    tab.buffer().set_text(&new_content);
+                    tab.buffer().set_modified(false);
+                    *tab.last_mtime.borrow_mut() = std::fs::metadata(&companion)
+                        .ok().and_then(|m| m.modified().ok());
+                }
+                let mut counts = std::collections::BTreeMap::new();
+                let fn_name = crate::codegen::make_fn_name_pub(class, id, &mut counts);
+                if let Some(tab) = s2.notebook.current_tab() {
+                    if let Some(byte_off) = crate::codegen::find_handler_offset(&new_content, &fn_name) {
+                        let char_off = new_content[..byte_off].chars().count();
+                        let iter = tab.buffer().iter_at_offset(char_off as i32);
+                        tab.buffer().place_cursor(&iter);
+                        tab.view.scroll_to_iter(&mut iter.clone(), 0.1, true, 0.0, 0.3);
+                    }
+                }
+            });
+        });
+    }
+
+    // ── center_nb switch: render active canvas on Design tab ──────────────────
+    {
+        let st = state.clone();
+        let node_view_ref = node_view.clone();
+        center_nb.connect_switch_page(move |_, _, page| {
+            if page == 0 {
+                if let Some(canvas) = st.borrow().canvas_reg.active() {
+                    canvas.render_from_buffer();
+                }
+            }
+            if page == 2 { node_view_ref.refresh(); }
+        });
+    }
+
+    // ── design_nb switch: re-wire toolbox/inspector to new active canvas ──────
+    {
+        let st = state.clone();
+        design_nb.connect_switch_page(move |_, _, _page| {
+            let s = st.borrow();
+            if let Some(canvas) = s.canvas_reg.active() {
+                if let Some(buf) = canvas.current_buffer() {
+                    s.toolbox.connect_buffer(&buf);
+                    s.outline.connect_buffer(&buf);
+                    s.node_view.connect_buffer(&buf);
+                }
+                canvas.render_from_buffer();
+            }
+        });
+    }
+
+    // ── close code tab → remove its design canvas ─────────────────────────────
+    {
+        let st = state.clone();
+        notebook.on_close(move |path| {
+            if Canvas::is_ui_file(path) {
+                st.borrow().canvas_reg.remove(path);
+            }
         });
     }
 
@@ -882,10 +977,12 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
 
     // Wire inspector selector combo selection → canvas highlight + inspector.
     {
-        let canvas_ref    = canvas.clone();
+        let st            = state.clone();
         let inspector_ref = toolbox.inspector.clone();
         toolbox.inspector.on_select_widget(move |byte_offset| {
-            canvas_ref.select_from_tree(byte_offset);
+            if let Some(canvas) = st.borrow().canvas_reg.active() {
+                canvas.select_from_tree(byte_offset);
+            }
             inspector_ref.update_from_offset(byte_offset);
         });
     }
@@ -898,14 +995,7 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         });
     }
 
-    // Wire canvas widget selection → palette insert target.
-    // When a canvas widget gets the blue highlight, palette inserts land there.
-    {
-        let palette_ref = toolbox.palette.clone();
-        canvas.on_widget_select(move |byte_offset, grid_cell| {
-            palette_ref.set_insert_target(byte_offset, grid_cell);
-        });
-    }
+    // canvas.on_widget_select and on_xml_error are now wired per-canvas via set_init_fn below.
 
     // ── Connect notebook tab-switch → statusbar + minimap + canvas ──
     // Wire clickable error locations in the output panel
@@ -1000,15 +1090,16 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
             // Connect canvas, toolbox, and outline if this is a .ui file
             if let Some(path) = tab.path() {
                 if Canvas::is_ui_file(&path) {
+                    let canvas = s.canvas_reg.get_or_create(&path);
                     if let Some((w, h)) = parse_window_size(&path) {
-                        s.canvas.set_window_hint(w, h);
+                        canvas.set_window_hint(w, h);
                     }
                     if let Some(dir) = path.parent() {
                         let css_path = dir.join("style.css");
                         let css = std::fs::read_to_string(&css_path).unwrap_or_default();
-                        s.canvas.set_project_css(&css);
+                        canvas.set_project_css(&css);
                     }
-                    s.canvas.connect_buffer(&tab.buffer());
+                    canvas.connect_buffer(&tab.buffer());
                     s.toolbox.connect_buffer(&tab.buffer());
                     s.outline.connect_buffer(&tab.buffer());
                     s.node_view.connect_buffer(&tab.buffer());
@@ -1018,10 +1109,7 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
                     s.node_view.set_rs_content(&rs_text);
                     let (start, end) = tab.buffer().bounds();
                     let text = tab.buffer().text(&start, &end, false).to_string();
-                    s.canvas.render(&text);
-                    // Reset history, snapshot the initial state, then attach
-                    // the debounced hook.  The initial push means there is
-                    // always a "pristine" baseline to undo all the way back to.
+                    canvas.render(&text);
                     s.history.borrow_mut().reset();
                     s.history.borrow_mut().push(&text);
                     {
@@ -1051,12 +1139,11 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
                         });
                     }
                 } else {
-                    s.canvas.clear();
+                    // Not a .ui — clear inspector/outline but keep design tabs intact
                     s.outline.clear_buffer();
                     s.node_view.clear();
                 }
             } else {
-                s.canvas.clear();
                 s.outline.clear_buffer();
                 s.node_view.clear();
             }
@@ -1069,35 +1156,11 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         sidebar.on_open(move |path| {
             let s = st.borrow();
             s.notebook.open_file_with_css(&path, &s.cfg);
-            // Always update toolbox buffer
-            if let Some(tab) = s.notebook.current_tab() {
-                s.toolbox.set_buffer(&tab.buffer());
-            }
-            // Activate canvas + toolbox + outline + node_view if this is a .ui file
+            // Switch to Design tab and Widgets panel for .ui files
+            // (canvas/toolbox/outline setup handled by on_switch)
             if Canvas::is_ui_file(&path) {
-                if let Some(tab) = s.notebook.current_tab() {
-                    if let Some((w, h)) = parse_window_size(&path) {
-                        s.canvas.set_window_hint(w, h);
-                    }
-                    if let Some(dir) = path.parent() {
-                        let css_path = dir.join("style.css");
-                        let css = std::fs::read_to_string(&css_path).unwrap_or_default();
-                        s.canvas.set_project_css(&css);
-                    }
-                    s.canvas.connect_buffer(&tab.buffer());
-                    s.toolbox.connect_buffer(&tab.buffer());
-                    s.outline.connect_buffer(&tab.buffer());
-                    s.node_view.connect_buffer(&tab.buffer());
-                    let rs_content = crate::codegen::companion_path(&path);
-                    let rs_text = std::fs::read_to_string(&rs_content).unwrap_or_default();
-                    s.node_view.set_rs_content(&rs_text);
-                    let (start, end) = tab.buffer().bounds();
-                    let text = tab.buffer().text(&start, &end, false).to_string();
-                    s.canvas.render(&text);
-                    // Switch to Design tab and Widgets panel
-                    s.center_nb.set_current_page(Some(0));
-                    s.left_nb.set_current_page(Some(1));
-                }
+                s.center_nb.set_current_page(Some(0));
+                s.left_nb.set_current_page(Some(1));
             }
             #[cfg(feature = "preview")]
             {
@@ -1124,47 +1187,61 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
             s.layout = saved_layout.clone();
         }
 
-        let s = state.borrow();
-        if saved_layout == "designer" {
-            s.left_nb.set_current_page(Some(1));
-            s.center_nb.set_current_page(Some(0));
-            s.minimap.set_visible(false);
-        }
-
-        let startup_dir = files_to_open
-            .first()
-            .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-            .unwrap_or_else(|| crate::config::startup_dir(&cfg));
-        s.sidebar.set_root(&startup_dir);
+        // Clone what we need before dropping borrow — open_file fires switch_page
+        // synchronously which tries borrow_mut() inside on_switch.
+        let (notebook_clone, cfg_clone) = {
+            let s = state.borrow();
+            if saved_layout == "designer" {
+                s.left_nb.set_current_page(Some(1));
+                s.center_nb.set_current_page(Some(0));
+                s.minimap.set_visible(false);
+            }
+            let startup_dir = files_to_open
+                .first()
+                .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+                .unwrap_or_else(|| crate::config::startup_dir(&cfg));
+            s.sidebar.set_root(&startup_dir);
+            (s.notebook.clone(), s.cfg.clone())
+        }; // borrow dropped here — on_switch can now borrow_mut freely
 
         for path in &files_to_open {
-            s.notebook.open_file(path, &s.cfg);
+            notebook_clone.open_file(path, &cfg_clone);
         }
 
-        if let Some(tab) = s.notebook.current_tab() {
-            s.minimap.set_view(&tab.view);
-            s.toolbox.set_buffer(&tab.buffer());
-            // If the last opened file is a .ui, activate canvas + toolbox + outline
-            if let Some(path) = tab.path() {
-                if Canvas::is_ui_file(&path) {
-                    s.canvas.connect_buffer(&tab.buffer());
-                    s.toolbox.connect_buffer(&tab.buffer());
-                    s.outline.connect_buffer(&tab.buffer());
-                    s.node_view.connect_buffer(&tab.buffer());
-                    let rs_text = std::fs::read_to_string(
-                        &crate::codegen::companion_path(&path)
-                    ).unwrap_or_default();
-                    s.node_view.set_rs_content(&rs_text);
-                    let (start, end) = tab.buffer().bounds();
-                    let text = tab.buffer().text(&start, &end, false).to_string();
-                    s.canvas.render(&text);
-                    s.center_nb.set_current_page(Some(0));
-                    s.left_nb.set_current_page(Some(1));
-                }
+        let ui_path_to_open: Option<std::path::PathBuf> = {
+            let s = state.borrow();
+            if let Some(tab) = s.notebook.current_tab() {
+                s.minimap.set_view(&tab.view);
+                s.toolbox.set_buffer(&tab.buffer());
+                tab.path().filter(|p| Canvas::is_ui_file(p))
+            } else {
+                None
+            }
+        };
+        let need_new_tab = notebook_clone.tab_count() == 0;
+
+        if let Some(path) = ui_path_to_open {
+            let mut s = state.borrow_mut();
+            let canvas = s.canvas_reg.get_or_create(&path);
+            if let Some(tab) = s.notebook.current_tab() {
+                canvas.connect_buffer(&tab.buffer());
+                s.toolbox.connect_buffer(&tab.buffer());
+                s.outline.connect_buffer(&tab.buffer());
+                s.node_view.connect_buffer(&tab.buffer());
+                let rs_text = std::fs::read_to_string(
+                    &crate::codegen::companion_path(&path)
+                ).unwrap_or_default();
+                s.node_view.set_rs_content(&rs_text);
+                let (start, end) = tab.buffer().bounds();
+                let text = tab.buffer().text(&start, &end, false).to_string();
+                canvas.render(&text);
+                s.center_nb.set_current_page(Some(0));
+                s.left_nb.set_current_page(Some(1));
             }
         }
 
-        if s.notebook.tab_count() == 0 {
+        if need_new_tab {
+            let s = state.borrow();
             s.notebook.new_tab(&s.cfg);
         }
     }
@@ -1189,7 +1266,7 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
             show_layout_dialog(&win, move |template, _title, _width, _height, _use_csd| {
                 let s = st2.borrow();
                 s.notebook.close_all();
-                s.canvas.clear();
+                s.canvas_reg.clear_all();
                 s.notebook.new_tab(&s.cfg);
                 if let Some(tab) = s.notebook.current_tab() {
                     tab.buffer().set_text(&template);
@@ -1197,13 +1274,6 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
                         tab.buffer().set_language(Some(&lang));
                     }
                     tab.buffer().set_modified(false);
-                    s.toolbox.set_buffer(&tab.buffer());
-                    s.canvas.connect_buffer(&tab.buffer());
-                    s.toolbox.connect_buffer(&tab.buffer());
-                    s.outline.connect_buffer(&tab.buffer());
-                    s.node_view.connect_buffer(&tab.buffer());
-                    s.node_view.set_rs_content("");
-                    s.canvas.render(&template);
                     s.center_nb.set_current_page(Some(0));
                     s.left_nb.set_current_page(Some(1));
                 }
@@ -1245,28 +1315,13 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
 
                             let s = st3.borrow();
                             s.notebook.close_all();
-                            s.canvas.clear();
+                            s.canvas_reg.clear_all();
                             s.sidebar.set_root(&dir);
 
                             let ui_path = dir.join("layout.ui");
                             s.notebook.open_file_with_css(&ui_path, &s.cfg);
-
-                            if let Some(tab) = s.notebook.current_tab() {
-                                s.toolbox.set_buffer(&tab.buffer());
-                                s.canvas.connect_buffer(&tab.buffer());
-                                s.toolbox.connect_buffer(&tab.buffer());
-                                s.outline.connect_buffer(&tab.buffer());
-                                s.node_view.connect_buffer(&tab.buffer());
-                                let rs_text = std::fs::read_to_string(
-                                    &crate::codegen::companion_path(&ui_path)
-                                ).unwrap_or_default();
-                                s.node_view.set_rs_content(&rs_text);
-                                let (start, end) = tab.buffer().bounds();
-                                let text = tab.buffer().text(&start, &end, false).to_string();
-                                s.canvas.render(&text);
-                                s.center_nb.set_current_page(Some(0));
-                                s.left_nb.set_current_page(Some(1));
-                            }
+                            s.center_nb.set_current_page(Some(0));
+                            s.left_nb.set_current_page(Some(1));
 
                             let main_path = dir.join("src").join("main.rs");
                             s.notebook.open_file(&main_path, &s.cfg);
@@ -1301,27 +1356,9 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
                         {
                             let s = st2.borrow();
                             s.notebook.open_file(&path, &s.cfg);
-                            // Always update toolbox buffer for the new tab
-                            if let Some(tab) = s.notebook.current_tab() {
-                                s.toolbox.set_buffer(&tab.buffer());
-                            }
-                            // Activate canvas + toolbox + outline if this is a .ui file
                             if Canvas::is_ui_file(&path) {
-                                if let Some(tab) = s.notebook.current_tab() {
-                                    s.canvas.connect_buffer(&tab.buffer());
-                                    s.toolbox.connect_buffer(&tab.buffer());
-                                    s.outline.connect_buffer(&tab.buffer());
-                                    s.node_view.connect_buffer(&tab.buffer());
-                                    let rs_text = std::fs::read_to_string(
-                                        &crate::codegen::companion_path(&path)
-                                    ).unwrap_or_default();
-                                    s.node_view.set_rs_content(&rs_text);
-                                    let (start, end) = tab.buffer().bounds();
-                                    let text = tab.buffer().text(&start, &end, false).to_string();
-                                    s.canvas.render(&text);
-                                    s.center_nb.set_current_page(Some(0));
-                                    s.left_nb.set_current_page(Some(1));
-                                }
+                                s.center_nb.set_current_page(Some(0));
+                                s.left_nb.set_current_page(Some(1));
                             }
                         }
                         // Track in MRU
@@ -1356,29 +1393,15 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
                         {
                             let s = st2.borrow();
                             s.notebook.close_all();
-                            s.canvas.clear();
+                            s.canvas_reg.clear_all();
                             s.sidebar.set_root(&dir);
 
                             // Auto-open layout.ui if it exists
                             let ui_path = dir.join("layout.ui");
                             if ui_path.exists() {
                                 s.notebook.open_file_with_css(&ui_path, &s.cfg);
-                                if let Some(tab) = s.notebook.current_tab() {
-                                    s.toolbox.set_buffer(&tab.buffer());
-                                    s.canvas.connect_buffer(&tab.buffer());
-                                    s.toolbox.connect_buffer(&tab.buffer());
-                                    s.outline.connect_buffer(&tab.buffer());
-                                    s.node_view.connect_buffer(&tab.buffer());
-                                    let rs_text = std::fs::read_to_string(
-                                        &crate::codegen::companion_path(&ui_path)
-                                    ).unwrap_or_default();
-                                    s.node_view.set_rs_content(&rs_text);
-                                    let (start, end) = tab.buffer().bounds();
-                                    let text = tab.buffer().text(&start, &end, false).to_string();
-                                    s.canvas.render(&text);
-                                    s.center_nb.set_current_page(Some(0));
-                                    s.left_nb.set_current_page(Some(1));
-                                }
+                                s.center_nb.set_current_page(Some(0));
+                                s.left_nb.set_current_page(Some(1));
                             }
 
                             // Auto-open all .rs files in src/
@@ -1451,25 +1474,9 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
                 {
                     let s = st.borrow();
                     s.notebook.open_file(&path, &s.cfg);
-                    if let Some(tab) = s.notebook.current_tab() {
-                        s.toolbox.set_buffer(&tab.buffer());
-                    }
                     if Canvas::is_ui_file(&path) {
-                        if let Some(tab) = s.notebook.current_tab() {
-                            s.canvas.connect_buffer(&tab.buffer());
-                            s.toolbox.connect_buffer(&tab.buffer());
-                            s.outline.connect_buffer(&tab.buffer());
-                            s.node_view.connect_buffer(&tab.buffer());
-                            let rs_text = std::fs::read_to_string(
-                                &crate::codegen::companion_path(&path)
-                            ).unwrap_or_default();
-                            s.node_view.set_rs_content(&rs_text);
-                            let (start, end) = tab.buffer().bounds();
-                            let text = tab.buffer().text(&start, &end, false).to_string();
-                            s.canvas.render(&text);
-                            s.center_nb.set_current_page(Some(0));
-                            s.left_nb.set_current_page(Some(1));
-                        }
+                        s.center_nb.set_current_page(Some(0));
+                        s.left_nb.set_current_page(Some(1));
                     }
                 }
                 // Promote to front of MRU
@@ -1504,22 +1511,8 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
                     let ui_path = dir.join("layout.ui");
                     if ui_path.exists() {
                         s.notebook.open_file(&ui_path, &s.cfg);
-                        if let Some(tab) = s.notebook.current_tab() {
-                            s.toolbox.set_buffer(&tab.buffer());
-                            s.canvas.connect_buffer(&tab.buffer());
-                            s.toolbox.connect_buffer(&tab.buffer());
-                            s.outline.connect_buffer(&tab.buffer());
-                            s.node_view.connect_buffer(&tab.buffer());
-                            let rs_text = std::fs::read_to_string(
-                                &crate::codegen::companion_path(&ui_path)
-                            ).unwrap_or_default();
-                            s.node_view.set_rs_content(&rs_text);
-                            let (start, end) = tab.buffer().bounds();
-                            let text = tab.buffer().text(&start, &end, false).to_string();
-                            s.canvas.render(&text);
-                            s.center_nb.set_current_page(Some(0));
-                            s.left_nb.set_current_page(Some(1));
-                        }
+                        s.center_nb.set_current_page(Some(0));
+                        s.left_nb.set_current_page(Some(1));
                     }
                     s.output.append_run_line(&format!("✓ Opened project → {}", dir.display()));
                     s.output.show_panel();
@@ -2195,76 +2188,7 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         });
     }
 
-    // ── Codegen: double-click a widget → open companion -app.rs ──
-    {
-        let st = state.clone();
-        state.borrow().canvas.set_on_double_click(move |class, id| {
-            // Only generate handlers for interactive widgets that have signals
-            if !crate::codegen::has_signal(class) {
-                return;
-            }
-            let s = st.borrow();
-            // Need the current .ui file path to derive the companion path
-            let ui_path = match s.notebook.current_tab().and_then(|t| t.path()) {
-                Some(p) if Canvas::is_ui_file(&p) => p,
-                _ => return, // not a .ui tab — nothing to do
-            };
-
-            // Get the current XML from the editor buffer
-            let xml = match s.notebook.current_tab() {
-                Some(tab) => {
-                    let (start, end) = tab.buffer().bounds();
-                    tab.buffer().text(&start, &end, false).to_string()
-                }
-                None => return,
-            };
-
-            let companion = crate::codegen::companion_path(&ui_path);
-
-            // Read or create the companion file
-            let existing = std::fs::read_to_string(&companion).unwrap_or_default();
-            let ui_filename = ui_path
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_default();
-
-            let new_content = if existing.is_empty() {
-                crate::codegen::generate_all_handlers(&xml, &ui_filename)
-            } else {
-                crate::codegen::merge_handlers(&existing, &xml, &ui_filename)
-            };
-
-            // Write the companion file
-            if let Err(e) = std::fs::write(&companion, &new_content) {
-                log::error!("Failed to write companion file: {}", e);
-                return;
-            }
-
-            // Open the companion in a new tab (or switch to it if already open)
-            s.notebook.open_file(&companion, &s.cfg);
-
-            // Force-refresh the buffer so there's no stale-disk prompt
-            if let Some(tab) = s.notebook.current_tab() {
-                tab.buffer().set_text(&new_content);
-                tab.buffer().set_modified(false);
-                *tab.last_mtime.borrow_mut() = std::fs::metadata(&companion)
-                    .ok()
-                    .and_then(|m| m.modified().ok());
-            }
-
-            // Find the handler function for this specific widget and jump to it
-            let mut counts = std::collections::BTreeMap::new();
-            let fn_name = crate::codegen::make_fn_name_pub(class, id, &mut counts);
-            if let Some(tab) = s.notebook.current_tab() {
-                if let Some(byte_off) = crate::codegen::find_handler_offset(&new_content, &fn_name) {
-                    let char_off = new_content[..byte_off].chars().count();
-                    let iter = tab.buffer().iter_at_offset(char_off as i32);
-                    tab.buffer().place_cursor(&iter);
-                    tab.view.scroll_to_iter(&mut iter.clone(), 0.1, true, 0.0, 0.3);
-                }
-            }
-        });
-    }
+    // Double-click handler is now registered per-canvas via set_init_fn above.
 
     // Run → Generate All Handlers
     {
@@ -2886,7 +2810,9 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
 
             if !ctrl && !shift && key == Key::Delete {
                 // Delete selected widget
-                st.borrow().canvas.delete_selected();
+                if let Some(canvas) = st.borrow().canvas_reg.active() {
+                    canvas.delete_selected();
+                }
                 return gtk4::glib::Propagation::Stop;
             }
 
@@ -3040,19 +2966,18 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
             dialog.choose(Some(&win), gtk4::gio::Cancellable::NONE, move |result| {
                 if result == Ok(1) {
                     // Recover: open the XML in a new tab
-                    let s = st2.borrow();
+                    let mut s = st2.borrow_mut();
                     s.notebook.new_tab(&s.cfg);
                     if let Some(tab) = s.notebook.current_tab() {
                         tab.buffer().set_text(&xml);
                         if let Some(lang) = sourceview5::LanguageManager::default().language("xml") {
                             tab.buffer().set_language(Some(&lang));
                         }
-                        s.canvas.connect_buffer(&tab.buffer());
                         s.toolbox.connect_buffer(&tab.buffer());
                         s.outline.connect_buffer(&tab.buffer());
                         s.node_view.connect_buffer(&tab.buffer());
                         s.node_view.set_rs_content("");
-                        s.canvas.render(&xml);
+                        // Unsaved recovery tab — canvas wired when user saves
                         s.center_nb.set_current_page(Some(0));
                         s.left_nb.set_current_page(Some(1));
                     }
