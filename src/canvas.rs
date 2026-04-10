@@ -18,6 +18,8 @@ use gtk4::{
     SearchEntry, Separator, SpinButton, Spinner, Switch, TextView, ToggleButton,
     Widget, Window,
 };
+#[cfg(feature = "adw")]
+use libadwaita::prelude::*;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
@@ -126,6 +128,8 @@ impl Canvas {
         let scroll = ScrolledWindow::builder()
             .hexpand(true)
             .vexpand(true)
+            .propagate_natural_width(false)
+            .propagate_natural_height(false)
             .child(&container)
             .build();
         scroll.add_css_class("designer-canvas");
@@ -1762,6 +1766,191 @@ fn build_widget(node: roxmltree::Node, ctx: &ClickCtx) -> Option<Widget> {
             return None;
         }
 
+        // ── Adwaita widgets ────────────────────────────────────────
+        #[cfg(feature = "adw")]
+        "AdwHeaderBar" => {
+            let hb = libadwaita::HeaderBar::new();
+            if let Some(v) = prop_val(&props, "show-title") {
+                hb.set_show_title(parse_bool(v));
+            }
+            apply_common_props(&hb, &props);
+            // Pack start/end children
+            for (ty, child) in &children {
+                match ty.as_deref() {
+                    Some("start") => hb.pack_start(child),
+                    Some("end")   => hb.pack_end(child),
+                    _             => {}
+                }
+            }
+            hb.upcast()
+        }
+
+        #[cfg(feature = "adw")]
+        "AdwWindowTitle" => {
+            let wt = libadwaita::WindowTitle::new(
+                prop_val(&props, "title").unwrap_or(""),
+                prop_val(&props, "subtitle").unwrap_or(""),
+            );
+            apply_common_props(&wt, &props);
+            wt.upcast()
+        }
+
+        #[cfg(feature = "adw")]
+        "AdwActionRow" => {
+            let row = libadwaita::ActionRow::new();
+            if let Some(v) = prop_val(&props, "title") { row.set_title(v); }
+            if let Some(v) = prop_val(&props, "subtitle") { row.set_subtitle(v); }
+            if let Some(v) = prop_val(&props, "icon-name") { row.add_prefix(&Image::from_icon_name(v)); }
+            apply_common_props(&row, &props);
+            for (_ty, child) in &children {
+                row.add_suffix(child);
+            }
+            row.upcast()
+        }
+
+        #[cfg(feature = "adw")]
+        "AdwSwitchRow" => {
+            let row = libadwaita::SwitchRow::new();
+            if let Some(v) = prop_val(&props, "title") { row.set_title(v); }
+            if let Some(v) = prop_val(&props, "subtitle") { row.set_subtitle(v); }
+            if let Some(v) = prop_val(&props, "active") { row.set_active(parse_bool(v)); }
+            apply_common_props(&row, &props);
+            row.upcast()
+        }
+
+        #[cfg(feature = "adw")]
+        "AdwSpinRow" => {
+            let adj = gtk4::Adjustment::new(50.0, 0.0, 100.0, 1.0, 10.0, 0.0);
+            let row = libadwaita::SpinRow::new(Some(&adj), 1.0, 0);
+            if let Some(v) = prop_val(&props, "title") { row.set_title(v); }
+            if let Some(v) = prop_val(&props, "subtitle") { row.set_subtitle(v); }
+            apply_common_props(&row, &props);
+            row.upcast()
+        }
+
+        #[cfg(feature = "adw")]
+        "AdwComboRow" => {
+            let row = libadwaita::ComboRow::new();
+            if let Some(v) = prop_val(&props, "title") { row.set_title(v); }
+            if let Some(v) = prop_val(&props, "subtitle") { row.set_subtitle(v); }
+            apply_common_props(&row, &props);
+            row.upcast()
+        }
+
+        #[cfg(feature = "adw")]
+        "AdwEntryRow" => {
+            let row = libadwaita::EntryRow::new();
+            if let Some(v) = prop_val(&props, "title") { row.set_title(v); }
+            apply_common_props(&row, &props);
+            row.upcast()
+        }
+
+        #[cfg(feature = "adw")]
+        "AdwPasswordEntryRow" => {
+            let row = libadwaita::PasswordEntryRow::new();
+            if let Some(v) = prop_val(&props, "title") { row.set_title(v); }
+            apply_common_props(&row, &props);
+            row.upcast()
+        }
+
+        #[cfg(feature = "adw")]
+        "AdwPreferencesGroup" => {
+            let grp = libadwaita::PreferencesGroup::new();
+            if let Some(v) = prop_val(&props, "title") { grp.set_title(v); }
+            if let Some(v) = prop_val(&props, "description") { grp.set_description(Some(v)); }
+            apply_common_props(&grp, &props);
+            for (_ty, child) in &children {
+                grp.add(child);
+            }
+            grp.upcast()
+        }
+
+        #[cfg(feature = "adw")]
+        "AdwPreferencesPage" => {
+            let page = libadwaita::PreferencesPage::new();
+            if let Some(v) = prop_val(&props, "title") { page.set_title(v); }
+            if let Some(v) = prop_val(&props, "icon-name") { page.set_icon_name(Some(v)); }
+            apply_common_props(&page, &props);
+            for (_ty, child) in &children {
+                if let Ok(grp) = child.clone().downcast::<libadwaita::PreferencesGroup>() {
+                    page.add(&grp);
+                }
+            }
+            page.upcast()
+        }
+
+        #[cfg(feature = "adw")]
+        "AdwNavigationPage" | "AdwNavigationView" | "AdwToolbarView" | "AdwToastOverlay" => {
+            // These have complex child/property patterns — render children in a box
+            let b = GtkBox::new(Orientation::Vertical, 0);
+            apply_common_props(&b, &props);
+            for (_ty, child) in &children {
+                b.append(child);
+            }
+            // Also look for inline <property name="content"><object>...</property>
+            if let Some(cp) = node.children()
+                .filter(|n| n.is_element() && n.tag_name().name() == "property")
+                .find(|n| n.attribute("name") == Some("content") || n.attribute("name") == Some("child"))
+            {
+                if let Some(obj) = find_inline_object(cp) {
+                    if let Some(w) = build_widget(obj, ctx) {
+                        b.append(&w);
+                    }
+                }
+            }
+            b.upcast()
+        }
+
+        #[cfg(feature = "adw")]
+        "AdwStatusPage" => {
+            let sp = libadwaita::StatusPage::new();
+            if let Some(v) = prop_val(&props, "title") { sp.set_title(v); }
+            if let Some(v) = prop_val(&props, "description") { sp.set_description(Some(v)); }
+            if let Some(v) = prop_val(&props, "icon-name") { sp.set_icon_name(Some(v)); }
+            apply_common_props(&sp, &props);
+            sp.upcast()
+        }
+
+        #[cfg(feature = "adw")]
+        "AdwClamp" => {
+            let clamp = libadwaita::Clamp::new();
+            if let Some(v) = prop_val(&props, "maximum-size") {
+                if let Ok(n) = v.trim().parse::<i32>() { clamp.set_maximum_size(n); }
+            }
+            apply_common_props(&clamp, &props);
+            if let Some((_ty, child)) = children.first() {
+                clamp.set_child(Some(child));
+            }
+            clamp.upcast()
+        }
+
+        #[cfg(feature = "adw")]
+        "AdwSplitButton" => {
+            let sb = libadwaita::SplitButton::new();
+            if let Some(v) = prop_val(&props, "label") { sb.set_label(v); }
+            if let Some(v) = prop_val(&props, "icon-name") { sb.set_icon_name(v); }
+            apply_common_props(&sb, &props);
+            sb.upcast()
+        }
+
+        #[cfg(feature = "adw")]
+        "AdwBanner" => {
+            let banner = libadwaita::Banner::new("");
+            if let Some(v) = prop_val(&props, "title") { banner.set_title(v); }
+            if let Some(v) = prop_val(&props, "revealed") { banner.set_revealed(parse_bool(v)); }
+            apply_common_props(&banner, &props);
+            banner.upcast()
+        }
+
+        #[cfg(feature = "adw")]
+        "AdwButtonContent" => {
+            let bc = libadwaita::ButtonContent::new();
+            if let Some(v) = prop_val(&props, "label") { bc.set_label(v); }
+            if let Some(v) = prop_val(&props, "icon-name") { bc.set_icon_name(v); }
+            apply_common_props(&bc, &props);
+            bc.upcast()
+        }
+
         // ── Fallback ────────────────────────────────────────────────
         _ => {
             // Unknown widget — show a placeholder
@@ -1878,6 +2067,14 @@ fn is_container_class(class: &str) -> bool {
             | "GtkPopover"
             | "GtkRevealer"
             | "GtkViewport"
+            // Adwaita containers
+            | "AdwPreferencesGroup"
+            | "AdwPreferencesPage"
+            | "AdwNavigationView"
+            | "AdwToolbarView"
+            | "AdwClamp"
+            | "AdwToastOverlay"
+            | "AdwHeaderBar"
     )
 }
 

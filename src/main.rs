@@ -45,6 +45,7 @@ mod strreplace;
 mod node_view;
 mod lsp_client;
 mod css_bank;
+mod command_palette;
 
 fn main() {
     env_logger::init();
@@ -52,6 +53,11 @@ fn main() {
     // The rui-theme GtkSourceView scheme is available via
     // schemes::generate_rui_scheme() if the user sets
     // color_scheme = "rui-theme" in rui.toml.
+
+    // Initialise libadwaita so Adw widgets are available in the canvas
+    // and UI builder. This must be called before creating the Application.
+    #[cfg(feature = "adw")]
+    let _ = libadwaita::init();
 
     let app = Application::builder()
         .application_id("org.rui.designer")

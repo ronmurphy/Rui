@@ -425,7 +425,15 @@ pub fn scaffold_project(dir: &Path, project_name: &str, ui: &str, win_title: &st
     let src_dir = dir.join("src");
     std::fs::create_dir_all(&src_dir)?;
 
+    // Detect whether the .ui uses any Adwaita widgets
+    let uses_adw = ui.contains("class=\"Adw");
+
     // ── Cargo.toml ──
+    let adw_dep = if uses_adw {
+        "\nlibadwaita = { version = \"0.7\", features = [\"v1_4\"] }\n"
+    } else {
+        "\n"
+    };
     let cargo_toml = format!(
         r#"[package]
 name = "{name}"
@@ -433,9 +441,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-gtk4 = {{ version = "0.9", features = ["v4_10"] }}
-"#,
-        name = project_name
+gtk4 = {{ version = "0.9", features = ["v4_10"] }}{adw_dep}"#,
+        name = project_name,
+        adw_dep = adw_dep,
     );
     std::fs::write(dir.join("Cargo.toml"), &cargo_toml)?;
 
@@ -463,17 +471,27 @@ gtk4 = {{ version = "0.9", features = ["v4_10"] }}
     } else {
         ""
     };
+    let adw_init = if uses_adw {
+        "\n    let _ = libadwaita::init();\n"
+    } else {
+        ""
+    };
+    let adw_use = if uses_adw {
+        "use libadwaita::prelude::*;\n"
+    } else {
+        ""
+    };
     let main_rs = format!(
         r#"use gtk4::prelude::*;
 use gtk4::Application;
-
+{adw_use}
 mod layout_app;
 
 fn main() {{
     let app = Application::builder()
         .application_id("com.example.{name}")
         .build();
-
+{adw_init}
     app.connect_activate(|app| {{
         let ui = include_str!("../layout.ui");
         // Strip Rui design-time metadata (rui-*) before passing to GTK Builder.
@@ -513,8 +531,67 @@ fn main() {{
         height = win_height,
         root_id = root_id,
         csd_snippet = csd_snippet,
+        adw_use = adw_use,
+        adw_init = adw_init,
     );
     std::fs::write(src_dir.join("main.rs"), &main_rs)?;
+
+    Ok(())
+}
+
+/// Ensure an existing project has libadwaita support if its .ui files use Adw widgets.
+/// Call this before building/running when any open .ui contains `class="Adw`.
+/// Patches Cargo.toml and src/main.rs in place if needed.
+pub fn ensure_adw_dependency(project_dir: &Path) -> std::io::Result<()> {
+    // Check all .ui files in the project for Adw usage
+    let has_adw = std::fs::read_dir(project_dir)?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().map_or(false, |ext| ext == "ui"))
+        .any(|e| {
+            std::fs::read_to_string(e.path())
+                .map(|s| s.contains("class=\"Adw"))
+                .unwrap_or(false)
+        });
+    if !has_adw {
+        return Ok(());
+    }
+
+    // Patch Cargo.toml if libadwaita is missing
+    let cargo_path = project_dir.join("Cargo.toml");
+    if cargo_path.exists() {
+        let cargo = std::fs::read_to_string(&cargo_path)?;
+        if !cargo.contains("libadwaita") {
+            let patched = cargo.replace(
+                "[dependencies]\n",
+                "[dependencies]\nlibadwaita = { version = \"0.7\", features = [\"v1_4\"] }\n",
+            );
+            std::fs::write(&cargo_path, patched)?;
+        }
+    }
+
+    // Patch src/main.rs if libadwaita::init() is missing
+    let main_path = project_dir.join("src").join("main.rs");
+    if main_path.exists() {
+        let main_rs = std::fs::read_to_string(&main_path)?;
+        if !main_rs.contains("libadwaita") {
+            let mut patched = main_rs.clone();
+            // Add use statement
+            if !patched.contains("use libadwaita") {
+                patched = patched.replace(
+                    "use gtk4::prelude::*;",
+                    "use gtk4::prelude::*;\nuse libadwaita::prelude::*;",
+                );
+            }
+            // Add init() call before app.connect_activate
+            if !patched.contains("libadwaita::init()") {
+                patched = patched.replace(
+                    "app.connect_activate(",
+                    "let _ = libadwaita::init();\n\n    app.connect_activate(",
+                );
+            }
+            std::fs::write(&main_path, patched)?;
+        }
+    }
 
     Ok(())
 }

@@ -37,7 +37,7 @@ impl Toolbox {
         header.add_css_class("heading");
 
         let widget = GtkBox::new(Orientation::Vertical, 0);
-        widget.set_width_request(220);
+        widget.set_width_request(-1);
         widget.append(&header);
 
         palette.widget.set_vexpand(true);

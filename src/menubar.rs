@@ -107,6 +107,7 @@ pub fn build(app: &Application) -> (Menu, Menu, Menu) {
 
     // ── Help ─────────────────────────────────────────────────────
     let help_menu = Menu::new();
+    help_menu.append(Some("Command Palette"),    Some("app.command-palette"));
     help_menu.append(Some("Help / Shortcuts"),  Some("app.help"));
     help_menu.append(Some("About Rui"),  Some("app.about"));
 
@@ -122,7 +123,7 @@ pub fn build(app: &Application) -> (Menu, Menu, Menu) {
         "layout-code", "layout-designer",
         "run", "build", "build-install", "stop", "check", "clippy", "format-file", "open-browser", "generate-handlers", "template-library", "css-bank",
         "ai-open", "claude-code-open", "api-chat-open", "ai-copy-file", "ai-copy-selection", "ai-apply-diff",
-        "help", "about",
+        "command-palette", "help", "about",
     ] {
         let action = SimpleAction::new(name, None);
         app.add_action(&action);

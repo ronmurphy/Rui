@@ -11,8 +11,9 @@ name = "rui"
 path = "src/main.rs"
 
 [features]
-default = ["preview"]
+default = ["preview", "adw"]
 preview = ["dep:webkit6"]
+adw = ["dep:libadwaita"]
 
 [dependencies]
 gtk4          = { version = "0.9", features = ["v4_10"] }
@@ -32,6 +33,9 @@ url           = "2"
 
 # WebKit preview — optional, requires webkitgtk-6.0 system library
 webkit6 = { version = "0.4", optional = true }
+
+# Libadwaita — optional, provides modern GNOME widgets (AdwHeaderBar, AdwActionRow, etc.)
+libadwaita = { version = "0.7", features = ["v1_4"], optional = true }
 
 [package.metadata.bundle]
 name = "Rui"

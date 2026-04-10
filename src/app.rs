@@ -9,6 +9,7 @@ use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::rc::Rc;
 
+use crate::command_palette;
 use crate::diff_tool;
 use crate::diagnostics;
 use crate::find::FindBar;
@@ -446,7 +447,7 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
     header_bar.set_title_widget(Some(&view_switcher));
 
     let minimap = Map::new();
-    minimap.set_size_request(100, -1);
+    minimap.set_size_request(60, -1);
     minimap.set_visible(false);
 
     let editor_body = GtkBox::new(Orientation::Horizontal, 0);
@@ -502,7 +503,7 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
     // ── Left notebook: Tree | Widgets | Files ────────
     let left_nb = GtkNotebook::new();
     left_nb.set_show_border(false);
-    left_nb.set_width_request(230);
+    left_nb.set_width_request(180);
     sidebar.widget.set_visible(true);
     toolbox.widget.set_visible(true);
     outline.widget.set_visible(true);
@@ -676,7 +677,7 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
     // ── Right notebook: Properties | AI Chat ────────
     let right_nb = GtkNotebook::new();
     right_nb.set_show_border(false);
-    right_nb.set_width_request(260);
+    right_nb.set_width_request(200);
     
     toolbox.inspector.widget.set_visible(true);
     toolbox.inspector.widget.set_vexpand(true);
@@ -719,8 +720,8 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
     right_paned.set_end_child(Some(&right_nb));
     right_paned.set_resize_start_child(true);
     right_paned.set_resize_end_child(false);
-    right_paned.set_shrink_start_child(false);
-    right_paned.set_shrink_end_child(false);
+    right_paned.set_shrink_start_child(true);
+    right_paned.set_shrink_end_child(true);
     {
         let p = right_paned.clone();
         right_paned.connect_map(move |_| {
@@ -736,14 +737,9 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
     main_paned.set_end_child(Some(&right_paned));
     main_paned.set_resize_start_child(false);
     main_paned.set_resize_end_child(true);
-    main_paned.set_shrink_start_child(false);
-    main_paned.set_shrink_end_child(false);
+    main_paned.set_shrink_start_child(true);
+    main_paned.set_shrink_end_child(true);
     main_paned.set_position(230);
-
-    // Lock left panel at fixed width — not user-resizable.
-    main_paned.connect_notify_local(Some("position"), move |mp, _| {
-        if mp.position() != 230 { mp.set_position(230); }
-    });
 
     let vert_paned = Paned::new(Orientation::Vertical);
     vert_paned.set_start_child(Some(&main_paned));
@@ -1985,6 +1981,10 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
             // If a project dir is set with a Cargo.toml, use that
             if let Some(ref pd) = s.project_dir {
                 if pd.join("Cargo.toml").exists() {
+                    // Auto-add libadwaita dependency if .ui files use Adw widgets
+                    if let Err(e) = crate::codegen::ensure_adw_dependency(pd) {
+                        log::warn!("ensure_adw_dependency: {}", e);
+                    }
                     s.runner.run_in_dir(pd, &["run"], &s.output);
                     return;
                 }
@@ -2029,6 +2029,10 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
                 });
 
             if let Some(cd) = cargo_dir {
+                // Auto-add libadwaita dependency if .ui files use Adw widgets
+                if let Err(e) = crate::codegen::ensure_adw_dependency(&cd) {
+                    log::warn!("ensure_adw_dependency: {}", e);
+                }
                 s.runner.check_then_build_in_dir(&cd, &["build", "--release"], &s.output);
             } else if let Some(tab) = s.notebook.current_tab() {
                 if let Some(path) = tab.path() {
@@ -2708,6 +2712,14 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
         });
     }
 
+    // Help → Command Palette
+    {
+        let win = window.clone();
+        menubar::connect_action(app, "command-palette", move || {
+            command_palette::show(&win);
+        });
+    }
+
     // Help → Help
     {
         let win = window.clone();
@@ -2771,6 +2783,7 @@ pub fn build_ui(app: &Application, open_paths: Vec<PathBuf>) {
     app.set_accels_for_action("app.run",            &["F5"]);
     app.set_accels_for_action("app.build",         &["<Ctrl><Shift>B"]);
     app.set_accels_for_action("app.stop",          &["<Shift>F5"]);
+    app.set_accels_for_action("app.command-palette", &["<Ctrl>P"]);
 
     // ── Window-level key handler for designer undo/redo ──────────
     // Intercepts Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z in Capture phase so that

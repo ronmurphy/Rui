@@ -47,6 +47,8 @@ impl FileTree {
             .activate_on_single_click(false)
             .build();
 
+        tree_view.set_margin_start(4);
+        tree_view.set_margin_end(4);
         tree_view.selection().set_mode(SelectionMode::Single);
 
         let col = TreeViewColumn::new();
@@ -61,7 +63,7 @@ impl FileTree {
             .vscrollbar_policy(gtk4::PolicyType::Automatic)
             .hexpand(false)
             .vexpand(true)
-            .width_request(200)
+            .width_request(-1)
             .build();
         scroll.add_css_class("editor-sidebar");
 

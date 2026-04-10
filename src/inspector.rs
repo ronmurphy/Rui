@@ -1259,6 +1259,38 @@ fn enum_options_for(prop_name: &str, current_value: &str) -> Option<&'static [&'
         // ── Size group mode ───────────────────────────────────────────
         "size_group_mode" => Some(&["none", "horizontal", "vertical", "both"]),
 
+        // ── Adwaita (libadwaita) properties ──────────────────────────
+        // AdwNavigationView / AdwNavigationPage
+        "navigation_direction" => Some(&["back", "forward"]),
+
+        // AdwLeaflet / AdwFlap fold policy
+        "fold_policy" => Some(&["never", "always", "auto"]),
+
+        // AdwFlap / layout policy
+        "fold_threshold_policy" => Some(&["minimum", "natural"]),
+
+        // AdwLeaflet / AdwFlap transition type
+        "leaflet_transition_type" => Some(&["over", "under", "slide"]),
+
+        // AdwToolbarView styles
+        "top_bar_style" | "bottom_bar_style"
+            => Some(&["flat", "raised", "raised-border"]),
+
+        // AdwBanner revealed
+        "revealed" => Some(&["true", "false"]),
+
+        // AdwHeaderBar centering policy
+        "centering_policy" => Some(&["loose", "strict"]),
+
+        // AdwClamp / AdwSqueezer
+        "tightening_threshold" => None,  // numeric, skip
+
+        // AdwViewSwitcher policy
+        "view_switcher_policy" => Some(&["auto", "narrow", "wide"]),
+
+        // AdwToast priority
+        "priority" => Some(&["normal", "high"]),
+
         _ => None,
     }
 }

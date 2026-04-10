@@ -72,6 +72,8 @@ impl OutlinePanel {
 
         let list_box = ListBox::new();
         list_box.set_selection_mode(SelectionMode::Single);
+        list_box.set_margin_start(4);
+        list_box.set_margin_end(4);
         list_box.add_css_class("navigation-sidebar");
 
         let scroll = ScrolledWindow::builder()

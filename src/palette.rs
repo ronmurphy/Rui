@@ -5,7 +5,7 @@
 
 use gtk4::prelude::*;
 use gtk4::{
-    Box as GtkBox, Button, Label, Orientation, ScrolledWindow, Separator,
+    Box as GtkBox, Button, Label, Orientation, ScrolledWindow, SearchEntry, Separator,
 };
 use sourceview5::prelude::*;
 use std::cell::RefCell;
@@ -602,6 +602,211 @@ const CATEGORIES: &[Category] = &[
             },
         ],
     },
+    // ── Adwaita (libadwaita) widgets ────────────────────────────────
+    Category {
+        name: "Adwaita",
+        widgets: &[
+            WidgetEntry {
+                name: "AdwHeaderBar",
+                icon: "\u{F2D2}",  // nf-fa-window_maximize
+                snippet: r#"<object class="AdwHeaderBar">
+  <property name="show-title">true</property>
+</object>"#,
+            },
+            WidgetEntry {
+                name: "AdwWindowTitle",
+                icon: "\u{F031}",  // nf-fa-font
+                snippet: r#"<object class="AdwWindowTitle">
+  <property name="title">Window Title</property>
+  <property name="subtitle">Subtitle text</property>
+</object>"#,
+            },
+            WidgetEntry {
+                name: "AdwActionRow",
+                icon: "\u{F061}",  // nf-fa-arrow_right
+                snippet: r#"<object class="AdwActionRow">
+  <property name="title">Action Row</property>
+  <property name="subtitle">Description text</property>
+</object>"#,
+            },
+            WidgetEntry {
+                name: "AdwSwitchRow",
+                icon: "\u{F205}",  // nf-fa-toggle_on
+                snippet: r#"<object class="AdwSwitchRow">
+  <property name="title">Switch Row</property>
+  <property name="subtitle">Toggle this setting</property>
+</object>"#,
+            },
+            WidgetEntry {
+                name: "AdwSpinRow",
+                icon: "\u{F162}",  // nf-fa-sort_numeric_asc
+                snippet: r#"<object class="AdwSpinRow">
+  <property name="title">Spin Row</property>
+  <property name="subtitle">Pick a number</property>
+  <property name="adjustment">
+    <object class="GtkAdjustment">
+      <property name="lower">0</property>
+      <property name="upper">100</property>
+      <property name="step-increment">1</property>
+      <property name="value">50</property>
+    </object>
+  </property>
+</object>"#,
+            },
+            WidgetEntry {
+                name: "AdwComboRow",
+                icon: "\u{F0D7}",  // nf-fa-caret_down
+                snippet: r#"<object class="AdwComboRow">
+  <property name="title">Combo Row</property>
+  <property name="model">
+    <object class="GtkStringList">
+      <items>
+        <item>Option 1</item>
+        <item>Option 2</item>
+        <item>Option 3</item>
+      </items>
+    </object>
+  </property>
+</object>"#,
+            },
+            WidgetEntry {
+                name: "AdwEntryRow",
+                icon: "\u{F11C}",  // nf-fa-keyboard_o
+                snippet: r#"<object class="AdwEntryRow">
+  <property name="title">Entry Row</property>
+</object>"#,
+            },
+            WidgetEntry {
+                name: "AdwPasswordEntryRow",
+                icon: "\u{F023}",  // nf-fa-lock
+                snippet: r#"<object class="AdwPasswordEntryRow">
+  <property name="title">Password</property>
+</object>"#,
+            },
+            WidgetEntry {
+                name: "AdwPreferencesGroup",
+                icon: "\u{F013}",  // nf-fa-cog
+                snippet: r#"<object class="AdwPreferencesGroup">
+  <property name="title">Settings Group</property>
+  <property name="description">Group description</property>
+  <child>
+    <object class="AdwActionRow">
+      <property name="title">Setting 1</property>
+    </object>
+  </child>
+</object>"#,
+            },
+            WidgetEntry {
+                name: "AdwPreferencesPage",
+                icon: "\u{F085}",  // nf-fa-cogs
+                snippet: r#"<object class="AdwPreferencesPage">
+  <property name="title">Preferences</property>
+  <property name="icon-name">preferences-system-symbolic</property>
+  <child>
+    <object class="AdwPreferencesGroup">
+      <property name="title">General</property>
+      <child>
+        <object class="AdwActionRow">
+          <property name="title">Option</property>
+        </object>
+      </child>
+    </object>
+  </child>
+</object>"#,
+            },
+            WidgetEntry {
+                name: "AdwNavigationView",
+                icon: "\u{F0C9}",  // nf-fa-bars
+                snippet: r#"<object class="AdwNavigationView">
+  <child>
+    <object class="AdwNavigationPage">
+      <property name="title">Page</property>
+      <property name="child">
+        <object class="AdwToolbarView">
+          <child type="top">
+            <object class="AdwHeaderBar"/>
+          </child>
+          <property name="content">
+            <object class="GtkLabel">
+              <property name="label">Page content</property>
+            </object>
+          </property>
+        </object>
+      </property>
+    </object>
+  </child>
+</object>"#,
+            },
+            WidgetEntry {
+                name: "AdwToolbarView",
+                icon: "\u{F009}",  // nf-fa-th_large
+                snippet: r#"<object class="AdwToolbarView">
+  <child type="top">
+    <object class="AdwHeaderBar"/>
+  </child>
+  <property name="content">
+    <object class="GtkLabel">
+      <property name="label">Content area</property>
+    </object>
+  </property>
+</object>"#,
+            },
+            WidgetEntry {
+                name: "AdwToastOverlay",
+                icon: "\u{F0F3}",  // nf-fa-bell
+                snippet: r#"<object class="AdwToastOverlay">
+  <property name="child">
+    <object class="GtkLabel">
+      <property name="label">Content under toasts</property>
+    </object>
+  </property>
+</object>"#,
+            },
+            WidgetEntry {
+                name: "AdwStatusPage",
+                icon: "\u{F05A}",  // nf-fa-info_circle
+                snippet: r#"<object class="AdwStatusPage">
+  <property name="title">Status Title</property>
+  <property name="description">Something happened</property>
+  <property name="icon-name">dialog-information-symbolic</property>
+</object>"#,
+            },
+            WidgetEntry {
+                name: "AdwClamp",
+                icon: "\u{F066}",  // nf-fa-compress
+                snippet: r#"<object class="AdwClamp">
+  <property name="maximum-size">600</property>
+  <child>
+    <!-- Clamped content -->
+  </child>
+</object>"#,
+            },
+            WidgetEntry {
+                name: "AdwSplitButton",
+                icon: "\u{F0D7}",  // nf-fa-caret_down
+                snippet: r#"<object class="AdwSplitButton">
+  <property name="label">Action</property>
+  <property name="icon-name">view-more-symbolic</property>
+</object>"#,
+            },
+            WidgetEntry {
+                name: "AdwBanner",
+                icon: "\u{F0A1}",  // nf-fa-bullhorn
+                snippet: r#"<object class="AdwBanner">
+  <property name="title">Important message</property>
+  <property name="revealed">true</property>
+</object>"#,
+            },
+            WidgetEntry {
+                name: "AdwButtonContent",
+                icon: "\u{F25A}",  // nf-fa-hand_pointer_o
+                snippet: r#"<object class="AdwButtonContent">
+  <property name="label">Button</property>
+  <property name="icon-name">document-open-symbolic</property>
+</object>"#,
+            },
+        ],
+    },
 ];
 
 /// Canvas insert target: (byte_offset inside `<object>`, optional grid cell (col, row)).
@@ -630,9 +835,26 @@ impl Palette {
         header.set_margin_bottom(2);
         header.add_css_class("heading");
 
+        // Search filter entry
+        let search_entry = SearchEntry::new();
+        search_entry.set_placeholder_text(Some("Filter widgets\u{2026}"));
+        search_entry.set_margin_start(8);
+        search_entry.set_margin_end(8);
+        search_entry.set_margin_top(4);
+        search_entry.set_margin_bottom(4);
+
         let list = GtkBox::new(Orientation::Vertical, 0);
-        list.set_margin_start(4);
+        list.set_margin_start(8);
         list.set_margin_end(4);
+
+        // Track widgets for filtering: (button, lowercase_name) per category,
+        // plus category label and separator.
+        struct CategoryWidgets {
+            label: Label,
+            separator: Separator,
+            buttons: Vec<(Button, String)>,
+        }
+        let mut filter_data: Vec<CategoryWidgets> = Vec::new();
 
         for category in CATEGORIES {
             // Category header
@@ -643,6 +865,8 @@ impl Palette {
             cat_label.set_margin_bottom(2);
             cat_label.add_css_class("dim-label");
             list.append(&cat_label);
+
+            let mut cat_buttons: Vec<(Button, String)> = Vec::new();
 
             for entry in category.widgets {
                 let btn = Button::new();
@@ -671,13 +895,39 @@ impl Palette {
                 });
 
                 list.append(&btn);
+                cat_buttons.push((btn.clone(), entry.name.to_lowercase()));
             }
 
             let sep = Separator::new(Orientation::Horizontal);
             sep.set_margin_top(4);
             sep.set_margin_bottom(2);
             list.append(&sep);
+
+            filter_data.push(CategoryWidgets {
+                label: cat_label,
+                separator: sep,
+                buttons: cat_buttons,
+            });
         }
+
+        // Wire up search filtering
+        let filter_data = Rc::new(filter_data);
+        let filter_data_ref = filter_data.clone();
+        search_entry.connect_search_changed(move |entry| {
+            let query = entry.text().to_string().to_lowercase();
+            for cat in filter_data_ref.iter() {
+                let mut any_visible = false;
+                for (btn, name) in &cat.buttons {
+                    let visible = query.is_empty() || name.contains(&query);
+                    btn.set_visible(visible);
+                    if visible {
+                        any_visible = true;
+                    }
+                }
+                cat.label.set_visible(any_visible);
+                cat.separator.set_visible(any_visible);
+            }
+        });
 
         let scroll = ScrolledWindow::builder()
             .hexpand(false)
@@ -686,8 +936,9 @@ impl Palette {
             .build();
 
         let widget = GtkBox::new(Orientation::Vertical, 0);
-        widget.set_width_request(200);
+        widget.set_width_request(-1);
         widget.append(&header);
+        widget.append(&search_entry);
         widget.append(&scroll);
 
         Palette {
@@ -778,8 +1029,13 @@ fn insert_snippet(buffer: &sourceview5::Buffer, snippet: &str, insert_target: &I
         snippet
     };
 
-    // Try to find the nearest container and insert before its </object>
-    if let Some(insert_byte) = find_container_insert_point(&full_text, cursor_byte) {
+    // Try to find the nearest container and insert before its </object>.
+    // If the cursor is outside any container, fall back to the first
+    // container in the document (typically the root grid/box).
+    let insert_byte = find_container_insert_point(&full_text, cursor_byte)
+        .or_else(|| find_first_container_insert_point(&full_text));
+
+    if let Some(insert_byte) = insert_byte {
         // Determine indentation from the </object> line
         let before_close = &full_text[..insert_byte];
         let last_nl = before_close.rfind('\n').map(|i| i + 1).unwrap_or(0);
@@ -810,11 +1066,11 @@ fn insert_snippet(buffer: &sourceview5::Buffer, snippet: &str, insert_target: &I
 /// Inject `<layout>` with grid column/row before `</object>` in a snippet.
 fn inject_grid_layout(snippet: &str, col: i32, row: i32) -> String {
     let layout = format!(
-        "<layout>\n<property name=\"column\">{}</property>\n<property name=\"row\">{}</property>\n<property name=\"column-span\">1</property>\n<property name=\"row-span\">1</property>\n</layout>",
+        "  <layout>\n    <property name=\"column\">{}</property>\n    <property name=\"row\">{}</property>\n    <property name=\"column-span\">1</property>\n    <property name=\"row-span\">1</property>\n  </layout>\n",
         col, row
     );
     if let Some(pos) = snippet.rfind("</object>") {
-        format!("{}{}\n{}", &snippet[..pos], layout, &snippet[pos..])
+        format!("{}{}{}", &snippet[..pos], layout, &snippet[pos..])
     } else {
         format!("{}\n{}", snippet, layout)
     }
@@ -891,6 +1147,30 @@ fn find_container_insert_point(xml: &str, cursor_byte: usize) -> Option<usize> {
     }
 }
 
+/// Fallback: find the first container `<object>` in the document and return
+/// the byte offset of its closing `</object>` tag.  Used when the cursor is
+/// outside any container (e.g. after `</interface>`).
+fn find_first_container_insert_point(xml: &str) -> Option<usize> {
+    let mut search_from = 0;
+    while let Some(rel) = xml[search_from..].find("<object") {
+        let obj_start = search_from + rel;
+        let tag_end_rel = xml[obj_start..].find('>')?;
+        let tag = &xml[obj_start..obj_start + tag_end_rel + 1];
+        let class = extract_class_from_tag(tag);
+
+        if let Some(cls) = &class {
+            if is_container_class(cls) {
+                let remainder = &xml[obj_start..];
+                let close_end = find_matching_close_object(remainder)?;
+                let close_tag_rel = remainder[..close_end].rfind("</object>")?;
+                return Some(obj_start + close_tag_rel);
+            }
+        }
+        search_from = obj_start + 7;
+    }
+    None
+}
+
 /// Find the end of the matching `</object>` (byte offset relative to input start).
 fn find_matching_close_object(s: &str) -> Option<usize> {
     let mut depth = 0i32;
@@ -944,5 +1224,13 @@ fn is_container_class(class: &str) -> bool {
             | "GtkPopover"
             | "GtkRevealer"
             | "GtkViewport"
+            // Adwaita containers
+            | "AdwPreferencesGroup"
+            | "AdwPreferencesPage"
+            | "AdwNavigationView"
+            | "AdwToolbarView"
+            | "AdwClamp"
+            | "AdwToastOverlay"
+            | "AdwHeaderBar"
     )
 }
